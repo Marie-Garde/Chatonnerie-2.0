@@ -7,6 +7,7 @@ const initial = computed(() => auth.displayName.charAt(0).toUpperCase())
 
 const icons = {
   heart: ['M19.5 12.6 12 20l-7.5-7.4A5 5 0 1 1 12 6a5 5 0 1 1 7.5 6.6z'],
+  rings: ['M15 12a6 6 0 1 1-12 0a6 6 0 1 1 12 0z', 'M21 12a6 6 0 1 1-12 0a6 6 0 1 1 12 0z'],
   sliders: [
     'M4 6h9',
     'M17 6h3',
@@ -22,6 +23,7 @@ const icons = {
 
 const links: { to: string; label: string; icon: keyof typeof icons }[] = [
   { to: '/therapie', label: 'Thérapie', icon: 'heart' },
+  { to: '/relation', label: 'Relation', icon: 'rings' },
   { to: '/reglages', label: 'Réglages', icon: 'sliders' },
 ]
 </script>

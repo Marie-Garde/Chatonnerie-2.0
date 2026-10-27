@@ -3,6 +3,12 @@ import { ref } from 'vue'
 import { supabase } from '@/lib/supabase'
 import type { SessionContent, SessionPatch, SessionType, TherapySession } from '@/types/session'
 
+export function isSharedWithCouple(session: TherapySession, userId: string | undefined) {
+  if (session.type === 'duo') return true
+  if (session.author_id !== userId) return true
+  return session.status === 'published' && session.shared
+}
+
 export const useSessionsStore = defineStore('sessions', () => {
   const sessions = ref<TherapySession[]>([])
   const loaded = ref(false)

@@ -97,6 +97,7 @@
   --font-display: 'Fraunces', Georgia, serif;
 
   --sidebar-width: 240px;
+  --mobile-nav-offset: calc(84px + env(safe-area-inset-bottom));
 
   color-scheme: dark;
 }
@@ -110,6 +111,7 @@
 
 body {
   min-height: 100vh;
+  min-height: 100dvh;
   background:
     radial-gradient(1200px 600px at 85% -10%, rgba(var(--accent-rgb), 0.08), transparent 60%),
     radial-gradient(900px 500px at -10% 110%, rgba(var(--secondary-rgb), 0.06), transparent 60%),
@@ -137,4 +139,12 @@ button {
 
 ::selection {
   background: var(--accent-soft);
+}
+
+@media (max-width: 768px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
 }

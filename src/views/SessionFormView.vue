@@ -367,7 +367,7 @@ function cancel() {
   }
 
   .actions {
-    bottom: 84px;
+    bottom: var(--mobile-nav-offset);
   }
 }
 </style>

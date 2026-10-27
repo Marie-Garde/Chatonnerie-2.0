@@ -4,9 +4,12 @@ import { supabase } from '@/lib/supabase'
 import { normalizeTagName, type TagColor } from '@/lib/tagColors'
 import { useAuthStore } from '@/stores/auth'
 
+export type TagScope = 'therapie' | 'envies'
+
 export interface Tag {
   id: string
   created_by: string
+  scope: TagScope
   name: string
   color: TagColor
 }
@@ -17,19 +20,21 @@ export const useTagsStore = defineStore('tags', () => {
   const rows = ref<Tag[]>([])
   const loaded = ref(false)
 
-  const tags = computed(() => {
+  function listFor(scope: TagScope) {
     const byName = new Map<string, Tag>()
     for (const tag of rows.value) {
+      if (tag.scope !== scope) continue
       const existing = byName.get(tag.name)
       if (!existing || tag.created_by === auth.user?.id) byName.set(tag.name, tag)
     }
     return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name, 'fr'))
-  })
+  }
 
-  const ownTags = computed(() => tags.value.filter((t) => t.created_by === auth.user?.id))
+  const tags = computed(() => listFor('therapie'))
+  const wishTags = computed(() => listFor('envies'))
 
-  function find(name: string) {
-    return tags.value.find((t) => t.name === name)
+  function find(name: string, scope: TagScope = 'therapie') {
+    return (scope === 'therapie' ? tags.value : wishTags.value).find((t) => t.name === name)
   }
 
   function reset() {
@@ -38,22 +43,22 @@ export const useTagsStore = defineStore('tags', () => {
   }
 
   async function fetch() {
-    const { data, error } = await supabase.from('tags').select('id, created_by, name, color')
+    const { data, error } = await supabase.from('tags').select('id, created_by, scope, name, color')
     if (error) throw error
     rows.value = data as Tag[]
     loaded.value = true
   }
 
-  async function create(name: string, color: TagColor) {
+  async function create(name: string, color: TagColor, scope: TagScope = 'therapie') {
     const normalized = normalizeTagName(name)
     if (!normalized) throw new Error('empty')
-    const existing = find(normalized)
+    const existing = find(normalized, scope)
     if (existing) return existing
 
     const { data, error } = await supabase
       .from('tags')
-      .insert({ name: normalized, color })
-      .select('id, created_by, name, color')
+      .insert({ name: normalized, color, scope })
+      .select('id, created_by, scope, name, color')
       .single()
     if (error) throw error
     rows.value.push(data as Tag)
@@ -73,5 +78,5 @@ export const useTagsStore = defineStore('tags', () => {
     rows.value = rows.value.filter((t) => t.id !== id)
   }
 
-  return { tags, ownTags, loaded, find, reset, fetch, create, updateColor, remove }
+  return { tags, wishTags, loaded, listFor, find, reset, fetch, create, updateColor, remove }
 })

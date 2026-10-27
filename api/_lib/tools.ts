@@ -9,6 +9,8 @@ export const SERVER_INSTRUCTIONS = `Chatonnerie est l'espace de thérapie de cou
 - Quand un sujet a déjà été abordé, retrouve-le avec search_sessions ou get_session plutôt que de faire répéter l'utilisateur.
 - Les séances de l'autre partenaire que tu peux lire ont été partagées volontairement. Utilise-les avec tact : ne cite pas mot pour mot ce que l'autre a confié sans que ce soit utile, et ne prends pas parti.
 - Les tags sont gérés dans l'appli : get_context renvoie la liste (available_tags). Quand l'utilisateur annonce le sujet ("on va parler de…"), retiens le ou les tags qui correspondent, cherche les séances passées sur ce tag avec list_sessions (topic) pour faire le lien, et applique ces tags à l'enregistrement. Ne crée jamais de tag : si aucun ne correspond, propose à l'utilisateur d'en créer un dans les réglages du site.
+- Profil de la relation : get_relation donne les langages de l'amour et des excuses de chacun, leurs modes d'emploi et vos repères. Consulte-le quand c'est utile (dispute, sentiment de manque, idée pour faire plaisir) et appuie-toi dessus concrètement, par exemple en reliant un ressenti au langage principal de la personne.
+- Avancées en duo : le couple suit certains sujets. Quand on te demande un bilan ("fais le bilan de nos avancées sur…"), appelle get_progress, lis les séances listées avec get_session et audience "couple", puis écris le bilan avec update_progress_summary. Ce bilan est lu par les deux partenaires : il ne doit jamais s'appuyer sur une séance privée.
 - Quand l'utilisateur te demande d'enregistrer la séance, rédige un compte-rendu fidèle et détaillé avec save_session. Il est enregistré en brouillon : l'utilisateur le relira, le publiera et choisira de le partager ou non sur le site.
 - Si quelqu'un est en danger ou en détresse, oriente vers les urgences (15, 112) ou le 3114 (prévention du suicide, 24h/24).
 
@@ -20,6 +22,40 @@ Séances à deux :
 - À la fin, enregistre avec save_session et type "duo", en attribuant clairement les ressentis et les citations à chacun.`
 
 type Ctx = { http?: { authInfo?: AuthInfo } }
+
+const LANGUAGE_NAMES: Record<'love' | 'apology', Record<string, string>> = {
+  love: {
+    paroles: 'Paroles valorisantes',
+    moments: 'Moments de qualité',
+    cadeaux: 'Cadeaux',
+    services: 'Services rendus',
+    contact: 'Contact physique',
+  },
+  apology: {
+    regrets: 'Exprimer des regrets',
+    responsabilite: 'Reconnaître sa responsabilité',
+    reparer: 'Réparer',
+    changer: "S'engager à changer",
+    pardon: 'Demander pardon',
+  },
+}
+
+const MANUAL_LABELS: Record<string, string> = {
+  stress_needs: 'Quand je suis stressé·e, j’ai besoin de',
+  stress_avoid: 'Quand je suis stressé·e, il vaut mieux éviter de',
+  conflict_helps: 'Pendant une dispute, ce qui m’aide',
+  conflict_triggers: 'Ce qui m’enflamme',
+  recharge: 'Comment je recharge mes batteries',
+  signals: 'Mes signaux quand ça ne va pas',
+  other: 'Autre chose à savoir sur moi',
+}
+
+const LANDMARK_LABELS: Record<string, string> = {
+  date: 'date importante',
+  ritual: 'rituel',
+  activity: 'activité préférée',
+  joke: 'private joke',
+}
 
 const SUMMARY_COLUMNS = 'id, author_id, type, status, shared, source, title, session_date, topics, summary'
 
@@ -98,7 +134,7 @@ function restrictToCouple<T extends { or: (filters: string) => T }>(query: T, au
 }
 
 async function loadTagNames(supabase: SupabaseClient): Promise<string[]> {
-  const { data } = await supabase.from('tags').select('name')
+  const { data } = await supabase.from('tags').select('name').eq('scope', 'therapie')
   return [...new Set((data ?? []).map((t) => t.name as string))].sort((a, b) => a.localeCompare(b, 'fr'))
 }
 
@@ -307,6 +343,171 @@ export function registerTools(server: McpServer) {
       const { data, error } = await restrictToCouple(search, audience, userId)
       if (error) return fail('La recherche a échoué.')
       return json({ results: (data ?? []).map((row) => describeSession(row, people)) })
+    },
+  )
+
+  server.registerTool(
+    'get_relation',
+    {
+      title: 'Profil de la relation',
+      description:
+        "Renvoie ce que les deux partenaires ont partagé dans l'onglet Nous : langages de l'amour (comment chacun reçoit et donne), langages des excuses, modes d'emploi (stress, disputes, recharge, signaux) et repères du couple (dates, rituels, activités, private jokes). Utile pour personnaliser tes conseils.",
+      inputSchema: z.object({}),
+      annotations: { readOnlyHint: true },
+    },
+    async (_args, ctx) => {
+      const { supabase, userId } = getAuth(ctx as Ctx)
+      const people = await loadPeople(supabase, userId)
+      const [{ data: profiles }, { data: manuals }, { data: landmarks }] = await Promise.all([
+        supabase.from('language_profiles').select('user_id, kind, receive_rank, give_rank, examples'),
+        supabase.from('user_manuals').select('*'),
+        people.coupleId
+          ? supabase.from('couple_landmarks').select('kind, title, detail, date').eq('couple_id', people.coupleId)
+          : Promise.resolve({ data: [] as Record<string, unknown>[] }),
+      ])
+
+      const describePerson = (id: string, name: string) => {
+        const profile = (kind: 'love' | 'apology') => {
+          const p = profiles?.find((row) => row.user_id === id && row.kind === kind)
+          if (!p) return null
+          const names = LANGUAGE_NAMES[kind]
+          const examples = (p.examples ?? {}) as Record<string, { positive?: string[]; negative?: string[] }>
+          return {
+            receive_ranking: (p.receive_rank as string[]).map((l) => names[l] ?? l),
+            ...(kind === 'love' ? { give_ranking: (p.give_rank as string[]).map((l) => names[l] ?? l) } : {}),
+            examples: Object.fromEntries(
+              Object.entries(examples)
+                .filter(([, e]) => e.positive?.length || e.negative?.length)
+                .map(([l, e]) => [
+                  names[l] ?? l,
+                  kind === 'love'
+                    ? { me_touche: e.positive ?? [], me_blesse: e.negative ?? [] }
+                    : { m_apaise: e.positive ?? [], sonne_faux: e.negative ?? [] },
+                ]),
+            ),
+          }
+        }
+        const manual = manuals?.find((m) => m.user_id === id)
+        return {
+          name,
+          love_languages: profile('love'),
+          apology_languages: profile('apology'),
+          user_manual: manual
+            ? Object.fromEntries(
+                Object.entries(MANUAL_LABELS)
+                  .filter(([key]) => typeof manual[key] === 'string' && manual[key].trim())
+                  .map(([key, label]) => [label, manual[key]]),
+              )
+            : null,
+        }
+      }
+
+      return json({
+        me: describePerson(people.me.id, people.me.name),
+        partner: people.partner ? describePerson(people.partner.id, people.partner.name) : null,
+        landmarks: (landmarks ?? []).map((l) => ({
+          type: LANDMARK_LABELS[l.kind as string] ?? l.kind,
+          title: l.title,
+          ...(l.detail ? { detail: l.detail } : {}),
+          ...(l.date ? { date: l.date } : {}),
+        })),
+      })
+    },
+  )
+
+  server.registerTool(
+    'get_progress',
+    {
+      title: 'Avancées en duo',
+      description:
+        "Renvoie les sujets (tags) que le couple a choisi de suivre, avec leur bilan actuel et des statistiques calculées uniquement sur les séances visibles par les deux partenaires.",
+      inputSchema: z.object({
+        tag: z.string().optional().describe('Limiter à un sujet suivi.'),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    async ({ tag }, ctx) => {
+      const { supabase, userId } = getAuth(ctx as Ctx)
+      const people = await loadPeople(supabase, userId)
+      if (!people.coupleId || !people.partner) {
+        return fail("Les avancées en duo nécessitent un ou une partenaire lié.")
+      }
+
+      let progressQuery = supabase
+        .from('tag_progress')
+        .select('tag, summary, summary_source, summary_updated_at')
+        .eq('couple_id', people.coupleId)
+      if (tag) progressQuery = progressQuery.eq('tag', normalizeTag(tag))
+      const { data: followed, error } = await progressQuery
+      if (error) return fail('Impossible de charger les avancées.')
+      if (!followed?.length) {
+        return json({
+          followed_topics: [],
+          note: "Aucun sujet suivi. L'utilisateur peut en choisir dans la page Avancées en duo du site.",
+        })
+      }
+
+      const sessionsQuery = supabase
+        .from('sessions')
+        .select('id, author_id, type, status, shared, title, session_date, topics, open_questions, next_steps')
+        .overlaps('topics', followed.map((f) => f.tag))
+        .order('session_date', { ascending: false })
+      const { data: rows } = await restrictToCouple(sessionsQuery, 'couple', userId)
+
+      return json({
+        followed_topics: followed.map((f) => {
+          const related = (rows ?? []).filter((r) => (r.topics as string[]).includes(f.tag))
+          return {
+            tag: f.tag,
+            summary: f.summary || null,
+            summary_updated_at: f.summary_updated_at,
+            summary_written_by: f.summary_source === 'claude' ? 'Claude' : 'un des partenaires',
+            session_count: related.length,
+            duo_count: related.filter((r) => r.type === 'duo').length,
+            last_session_date: related[0]?.session_date ?? null,
+            first_session_date: related[related.length - 1]?.session_date ?? null,
+            sessions: related.map((r) => ({ id: r.id, title: r.title, date: r.session_date, type: r.type === 'duo' ? 'à deux' : 'perso partagée' })),
+            recent_open_questions: related.slice(0, 3).flatMap((r) => r.open_questions as string[]),
+            recent_next_steps: related.slice(0, 3).flatMap((r) => r.next_steps as string[]),
+          }
+        }),
+      })
+    },
+  )
+
+  server.registerTool(
+    'update_progress_summary',
+    {
+      title: 'Mettre à jour un bilan',
+      description:
+        "Écrit le bilan global d'un sujet suivi en duo. Avant d'écrire, lis toutes les séances du sujet avec get_progress puis get_session (audience \"couple\"). Le bilan est visible par les deux partenaires : n'utilise jamais une séance privée.",
+      inputSchema: z.object({
+        tag: z.string().describe('Le sujet suivi.'),
+        summary: z
+          .string()
+          .min(1)
+          .describe(
+            "Bilan en plusieurs paragraphes : d'où vous partiez, ce qui a été exploré, ce qui a bougé, ce qui reste difficile, les pistes en cours. Ton bienveillant et factuel, sans prendre parti.",
+          ),
+      }),
+    },
+    async ({ tag, summary }, ctx) => {
+      const { supabase, userId } = getAuth(ctx as Ctx)
+      const people = await loadPeople(supabase, userId)
+      if (!people.coupleId) return fail("Les avancées en duo nécessitent un ou une partenaire lié.")
+
+      const { data, error } = await supabase
+        .from('tag_progress')
+        .update({ summary, summary_source: 'claude' })
+        .eq('couple_id', people.coupleId)
+        .eq('tag', normalizeTag(tag))
+        .select('tag')
+        .maybeSingle()
+      if (error) return fail("Le bilan n'a pas pu être enregistré.")
+      if (!data) {
+        return fail("Ce sujet n'est pas suivi. Propose à l'utilisateur de le suivre dans la page Avancées en duo du site.")
+      }
+      return json({ updated: true, tag: data.tag })
     },
   )
 

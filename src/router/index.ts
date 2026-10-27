@@ -29,6 +29,16 @@ const router = createRouter({
       component: () => import('@/views/TherapyView.vue'),
     },
     {
+      path: '/therapie/avancees',
+      name: 'progress',
+      component: () => import('@/views/ProgressView.vue'),
+    },
+    {
+      path: '/therapie/tuto',
+      name: 'tutorial',
+      component: () => import('@/views/TutorialView.vue'),
+    },
+    {
       path: '/therapie/seances/nouvelle',
       name: 'session-new',
       component: () => import('@/views/SessionFormView.vue'),
@@ -42,6 +52,11 @@ const router = createRouter({
       path: '/therapie/seances/:id/modifier',
       name: 'session-edit',
       component: () => import('@/views/SessionFormView.vue'),
+    },
+    {
+      path: '/relation',
+      name: 'relation',
+      component: () => import('@/views/RelationView.vue'),
     },
     {
       path: '/reglages',

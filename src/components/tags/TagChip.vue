@@ -1,16 +1,23 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { tagHex } from '@/lib/tagColors'
-import { useTagsStore } from '@/stores/tags'
+import { colorForName, tagHex } from '@/lib/tagColors'
+import { useTagsStore, type TagScope } from '@/stores/tags'
 
-const props = defineProps<{
-  name: string
-  active?: boolean
-  small?: boolean
-}>()
+const props = withDefaults(
+  defineProps<{
+    name: string
+    active?: boolean
+    small?: boolean
+    scope?: TagScope
+  }>(),
+  { scope: 'therapie' },
+)
 
 const tags = useTagsStore()
-const hex = computed(() => tagHex(tags.find(props.name)?.color))
+const hex = computed(() => {
+  const tag = tags.find(props.name, props.scope)
+  return tagHex(tag?.color ?? (props.scope === 'envies' ? colorForName(props.name) : undefined))
+})
 </script>
 
 <template>

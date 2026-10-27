@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import TagChip from '@/components/tags/TagChip.vue'
 import { TAG_COLORS, TAG_COLOR_KEYS, type TagColor } from '@/lib/tagColors'
 import { useAuthStore } from '@/stores/auth'
 import { useCoupleStore } from '@/stores/couple'
-import { useTagsStore } from '@/stores/tags'
+import { useTagsStore, type TagScope } from '@/stores/tags'
+
+const props = withDefaults(defineProps<{ scope?: TagScope }>(), { scope: 'therapie' })
 
 const auth = useAuthStore()
 const couple = useCoupleStore()
@@ -15,6 +17,16 @@ const color = ref<TagColor>('lavande')
 const busy = ref(false)
 const error = ref('')
 const confirmingId = ref<string | null>(null)
+
+const list = computed(() => tags.listFor(props.scope))
+const intro = computed(() =>
+  props.scope === 'envies'
+    ? 'Pour classer vos envies : été, en amoureux, à petit prix… Ils sont partagés avec ton ou ta partenaire.'
+    : 'Les sujets que vous abordez. Ils sont partagés avec ton ou ta partenaire, servent à filtrer les séances, et Claude les utilise quand vous lui dites de quoi vous allez parler.',
+)
+const placeholder = computed(() =>
+  props.scope === 'envies' ? 'été, en amoureux, petit budget…' : 'belle-famille, argent, intimité…',
+)
 
 async function run(action: () => Promise<unknown>) {
   error.value = ''
@@ -34,7 +46,7 @@ function create() {
     return
   }
   void run(async () => {
-    await tags.create(name.value, color.value)
+    await tags.create(name.value, color.value, props.scope)
     name.value = ''
   })
 }
@@ -49,15 +61,12 @@ function remove(id: string) {
 
 <template>
   <section class="card">
-    <h2 class="section-title">Tags</h2>
-    <p class="muted">
-      Les sujets que vous abordez. Ils sont partagés avec ton ou ta partenaire, servent à filtrer les séances, et Claude
-      les utilise quand vous lui dites de quoi vous allez parler.
-    </p>
+    <h2 class="section-title">{{ scope === 'envies' ? 'Tags des envies' : 'Tags' }}</h2>
+    <p class="muted">{{ intro }}</p>
 
-    <ul v-if="tags.tags.length" class="list">
-      <li v-for="tag in tags.tags" :key="tag.id" class="row">
-        <TagChip :name="tag.name" />
+    <ul v-if="list.length" class="list">
+      <li v-for="tag in list" :key="tag.id" class="row">
+        <TagChip :name="tag.name" :scope="scope" />
         <span v-if="tag.created_by !== auth.user?.id" class="faint">créé par {{ couple.nameOf(tag.created_by) }}</span>
         <div v-else class="row-actions">
           <div class="swatches" role="radiogroup" :aria-label="`Couleur de ${tag.name}`">
@@ -101,7 +110,7 @@ function remove(id: string) {
         class="input"
         type="text"
         maxlength="40"
-        placeholder="belle-famille, argent, intimité…"
+        :placeholder="placeholder"
         @input="error = ''"
       />
       <div class="swatches" role="radiogroup" aria-label="Couleur du nouveau tag">

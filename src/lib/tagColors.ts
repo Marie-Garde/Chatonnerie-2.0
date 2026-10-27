@@ -17,6 +17,12 @@ export function tagHex(color: string | undefined) {
   return TAG_COLORS[(color ?? 'gris') as TagColor] ?? TAG_COLORS.gris
 }
 
+export function colorForName(name: string): TagColor {
+  let hash = 0
+  for (const char of name) hash = (hash * 31 + char.charCodeAt(0)) >>> 0
+  return TAG_COLOR_KEYS[hash % TAG_COLOR_KEYS.length]!
+}
+
 export function normalizeTagName(name: string) {
   return name.trim().toLowerCase().replace(/\s+/g, ' ')
 }

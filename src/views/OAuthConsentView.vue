@@ -132,6 +132,7 @@ async function decide(approve: boolean) {
   display: grid;
   place-items: center;
   min-height: 100vh;
+  min-height: 100dvh;
   padding: 24px 16px;
 }
 

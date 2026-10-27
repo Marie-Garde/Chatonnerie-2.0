@@ -5,13 +5,19 @@ import SideNav from '@/components/layout/SideNav.vue'
 import InvitationBanner from '@/components/couple/InvitationBanner.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useCoupleStore } from '@/stores/couple'
+import { useProgressStore } from '@/stores/progress'
+import { useRelationStore } from '@/stores/relation'
 import { useSessionsStore } from '@/stores/sessions'
 import { useTagsStore } from '@/stores/tags'
+import { useWishesStore } from '@/stores/wishes'
 
 const auth = useAuthStore()
 const couple = useCoupleStore()
+const progress = useProgressStore()
+const relation = useRelationStore()
 const sessions = useSessionsStore()
 const tags = useTagsStore()
+const wishes = useWishesStore()
 const route = useRoute()
 const router = useRouter()
 
@@ -30,6 +36,9 @@ watch(
   () => auth.user?.id,
   (userId) => {
     sessions.reset()
+    progress.reset()
+    relation.reset()
+    wishes.reset()
     if (userId) void couple.fetch()
     else {
       couple.reset()
@@ -63,6 +72,7 @@ watch(
 .app-shell {
   display: flex;
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .app-main {
@@ -77,7 +87,7 @@ watch(
   }
 
   .app-main {
-    padding: 24px 16px 96px;
+    padding: calc(20px + env(safe-area-inset-top)) 16px calc(var(--mobile-nav-offset) + 16px);
   }
 }
 </style>
