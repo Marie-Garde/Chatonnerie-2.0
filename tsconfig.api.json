@@ -1,0 +1,12 @@
+{
+  "extends": "@tsconfig/node24/tsconfig.json",
+  "include": ["api/**/*.ts"],
+  "compilerOptions": {
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "types": ["node"],
+    "noEmit": true,
+    "noUncheckedIndexedAccess": true,
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.api.tsbuildinfo"
+  }
+}
