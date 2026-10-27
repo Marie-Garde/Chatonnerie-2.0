@@ -10,6 +10,7 @@ import { useRelationStore } from '@/stores/relation'
 import { useSessionsStore } from '@/stores/sessions'
 import { useTagsStore } from '@/stores/tags'
 import { useWishesStore } from '@/stores/wishes'
+import { useNonMonoStore } from '@/stores/nonmono'
 
 const auth = useAuthStore()
 const couple = useCoupleStore()
@@ -18,6 +19,7 @@ const relation = useRelationStore()
 const sessions = useSessionsStore()
 const tags = useTagsStore()
 const wishes = useWishesStore()
+const nonmono = useNonMonoStore()
 const route = useRoute()
 const router = useRouter()
 
@@ -39,6 +41,7 @@ watch(
     progress.reset()
     relation.reset()
     wishes.reset()
+    nonmono.reset()
     if (userId) void couple.fetch()
     else {
       couple.reset()

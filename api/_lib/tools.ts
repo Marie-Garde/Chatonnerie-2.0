@@ -9,7 +9,7 @@ export const SERVER_INSTRUCTIONS = `Chatonnerie est l'espace de thérapie de cou
 - Quand un sujet a déjà été abordé, retrouve-le avec search_sessions ou get_session plutôt que de faire répéter l'utilisateur.
 - Les séances de l'autre partenaire que tu peux lire ont été partagées volontairement. Utilise-les avec tact : ne cite pas mot pour mot ce que l'autre a confié sans que ce soit utile, et ne prends pas parti.
 - Les tags sont gérés dans l'appli : get_context renvoie la liste (available_tags). Quand l'utilisateur annonce le sujet ("on va parler de…"), retiens le ou les tags qui correspondent, cherche les séances passées sur ce tag avec list_sessions (topic) pour faire le lien, et applique ces tags à l'enregistrement. Ne crée jamais de tag : si aucun ne correspond, propose à l'utilisateur d'en créer un dans les réglages du site.
-- Profil de la relation : get_relation donne les langages de l'amour et des excuses de chacun, leurs modes d'emploi et vos repères. Consulte-le quand c'est utile (dispute, sentiment de manque, idée pour faire plaisir) et appuie-toi dessus concrètement, par exemple en reliant un ressenti au langage principal de la personne.
+- Profil de la relation : get_relation donne les langages de l'amour et des excuses de chacun, leurs modes d'emploi, vos repères, et votre cadre de non-monogamie (règles, hard limits, besoins de chacun pour se sentir en sécurité, mot de pause). Respecte strictement les hard limits et ne propose jamais de les remettre en question. Consulte-le quand c'est utile (dispute, sentiment de manque, idée pour faire plaisir) et appuie-toi dessus concrètement, par exemple en reliant un ressenti au langage principal de la personne.
 - Avancées en duo : le couple suit certains sujets. Quand on te demande un bilan ("fais le bilan de nos avancées sur…"), appelle get_progress, lis les séances listées avec get_session et audience "couple", puis écris le bilan avec update_progress_summary. Ce bilan est lu par les deux partenaires : il ne doit jamais s'appuyer sur une séance privée.
 - Quand l'utilisateur te demande d'enregistrer la séance, rédige un compte-rendu fidèle et détaillé avec save_session. Il est enregistré en brouillon : l'utilisateur le relira, le publiera et choisira de le partager ou non sur le site.
 - Si quelqu'un est en danger ou en détresse, oriente vers les urgences (15, 112) ou le 3114 (prévention du suicide, 24h/24).
@@ -48,6 +48,16 @@ const MANUAL_LABELS: Record<string, string> = {
   recharge: 'Comment je recharge mes batteries',
   signals: 'Mes signaux quand ça ne va pas',
   other: 'Autre chose à savoir sur moi',
+}
+
+const CARE_LABELS: Record<string, string> = {
+  info_level: 'Ce que je veux savoir de ses rencontres (tout / essentiel / minimum)',
+  info_note: 'Précision sur ce que je veux savoir',
+  before: 'Avant un rendez-vous',
+  during: 'Pendant',
+  after: 'Au retour',
+  jealousy: 'Quand je ressens de la jalousie',
+  priority: 'Ce qui me fait sentir prioritaire',
 }
 
 const LANDMARK_LABELS: Record<string, string> = {
@@ -351,19 +361,36 @@ export function registerTools(server: McpServer) {
     {
       title: 'Profil de la relation',
       description:
-        "Renvoie ce que les deux partenaires ont partagé dans l'onglet Nous : langages de l'amour (comment chacun reçoit et donne), langages des excuses, modes d'emploi (stress, disputes, recharge, signaux) et repères du couple (dates, rituels, activités, private jokes). Utile pour personnaliser tes conseils.",
+        "Renvoie ce que les deux partenaires ont partagé dans l'onglet Relation : langages de l'amour (comment chacun reçoit et donne), langages des excuses, modes d'emploi (stress, disputes, recharge, signaux), repères du couple (dates, rituels, activités, private jokes) et cadre de non-monogamie (règles, limites de chacun, comment prendre soin de l'autre, mot de pause). Utile pour personnaliser tes conseils.",
       inputSchema: z.object({}),
       annotations: { readOnlyHint: true },
     },
     async (_args, ctx) => {
       const { supabase, userId } = getAuth(ctx as Ctx)
       const people = await loadPeople(supabase, userId)
-      const [{ data: profiles }, { data: manuals }, { data: landmarks }] = await Promise.all([
+      const empty = Promise.resolve({ data: [] as Record<string, unknown>[] })
+      const [
+        { data: profiles },
+        { data: manuals },
+        { data: landmarks },
+        { data: agreements },
+        { data: rules },
+        { data: limits },
+        { data: cares },
+      ] = await Promise.all([
         supabase.from('language_profiles').select('user_id, kind, receive_rank, give_rank, examples'),
         supabase.from('user_manuals').select('*'),
         people.coupleId
           ? supabase.from('couple_landmarks').select('kind, title, detail, date').eq('couple_id', people.coupleId)
-          : Promise.resolve({ data: [] as Record<string, unknown>[] }),
+          : empty,
+        people.coupleId
+          ? supabase.from('nm_agreements').select('pause_word, next_checkin, last_review').eq('couple_id', people.coupleId)
+          : empty,
+        people.coupleId
+          ? supabase.from('nm_rules').select('text, detail').eq('couple_id', people.coupleId).order('created_at')
+          : empty,
+        supabase.from('nm_limits').select('user_id, level, text').order('created_at'),
+        supabase.from('nm_care').select('*'),
       ])
 
       const describePerson = (id: string, name: string) => {
@@ -388,6 +415,8 @@ export function registerTools(server: McpServer) {
           }
         }
         const manual = manuals?.find((m) => m.user_id === id)
+        const care = cares?.find((c) => c.user_id === id)
+        const ownLimits = (limits ?? []).filter((l) => l.user_id === id)
         return {
           name,
           love_languages: profile('love'),
@@ -399,12 +428,29 @@ export function registerTools(server: McpServer) {
                   .map(([key, label]) => [label, manual[key]]),
               )
             : null,
+          non_monogamy: {
+            hard_limits: ownLimits.filter((l) => l.level === 'hard').map((l) => l.text),
+            limits_to_discuss_first: ownLimits.filter((l) => l.level === 'soft').map((l) => l.text),
+            care: care
+              ? Object.fromEntries(
+                  Object.entries(CARE_LABELS)
+                    .filter(([key]) => typeof care[key] === 'string' && care[key].trim())
+                    .map(([key, label]) => [label, care[key]]),
+                )
+              : null,
+          },
         }
       }
 
       return json({
         me: describePerson(people.me.id, people.me.name),
         partner: people.partner ? describePerson(people.partner.id, people.partner.name) : null,
+        non_monogamy_agreements: {
+          pause_word: (agreements?.[0]?.pause_word as string) || null,
+          next_checkin: agreements?.[0]?.next_checkin ?? null,
+          last_review: agreements?.[0]?.last_review ?? null,
+          rules: (rules ?? []).map((r) => (r.detail ? `${r.text} (${r.detail})` : r.text)),
+        },
         landmarks: (landmarks ?? []).map((l) => ({
           type: LANDMARK_LABELS[l.kind as string] ?? l.kind,
           title: l.title,

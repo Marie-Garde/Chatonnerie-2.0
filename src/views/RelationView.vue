@@ -5,6 +5,7 @@ import LanguageSection from '@/components/relation/LanguageSection.vue'
 import ManualSection from '@/components/relation/ManualSection.vue'
 import PageTabs from '@/components/ui/PageTabs.vue'
 import WishBoard from '@/components/wishes/WishBoard.vue'
+import NonMonoBoard from '@/components/nonmono/NonMonoBoard.vue'
 import { useCoupleStore } from '@/stores/couple'
 import { useRelationStore } from '@/stores/relation'
 
@@ -16,6 +17,7 @@ const error = ref(false)
 const tabs = [
   { id: 'nous', label: 'Nous' },
   { id: 'envies', label: 'Envies' },
+  { id: 'non-monogamie', label: 'Non-monogamie' },
 ] as const
 
 const sections = [
@@ -56,7 +58,8 @@ watch(() => couple.coupleId, load)
           <LandmarksSection v-else />
         </PageTabs>
       </div>
-      <WishBoard v-else />
+      <WishBoard v-else-if="active === 'envies'" />
+      <NonMonoBoard v-else />
     </PageTabs>
   </div>
 </template>
