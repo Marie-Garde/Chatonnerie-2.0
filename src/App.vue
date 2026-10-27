@@ -6,10 +6,12 @@ import InvitationBanner from '@/components/couple/InvitationBanner.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useCoupleStore } from '@/stores/couple'
 import { useSessionsStore } from '@/stores/sessions'
+import { useTagsStore } from '@/stores/tags'
 
 const auth = useAuthStore()
 const couple = useCoupleStore()
 const sessions = useSessionsStore()
+const tags = useTagsStore()
 const route = useRoute()
 const router = useRouter()
 
@@ -29,7 +31,18 @@ watch(
   (userId) => {
     sessions.reset()
     if (userId) void couple.fetch()
-    else couple.reset()
+    else {
+      couple.reset()
+      tags.reset()
+    }
+  },
+  { immediate: true },
+)
+
+watch(
+  () => [auth.user?.id, couple.partner?.user_id],
+  ([userId]) => {
+    if (userId) void tags.fetch().catch(() => {})
   },
   { immediate: true },
 )

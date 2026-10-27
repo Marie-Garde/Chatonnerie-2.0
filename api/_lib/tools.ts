@@ -8,6 +8,7 @@ export const SERVER_INSTRUCTIONS = `Chatonnerie est l'espace de thérapie de cou
 - Au début de chaque conversation, appelle get_context pour savoir qui te parle, qui est son ou sa partenaire et ce qui s'est passé dans les dernières séances.
 - Quand un sujet a déjà été abordé, retrouve-le avec search_sessions ou get_session plutôt que de faire répéter l'utilisateur.
 - Les séances de l'autre partenaire que tu peux lire ont été partagées volontairement. Utilise-les avec tact : ne cite pas mot pour mot ce que l'autre a confié sans que ce soit utile, et ne prends pas parti.
+- Les tags sont gérés dans l'appli : get_context renvoie la liste (available_tags). Quand l'utilisateur annonce le sujet ("on va parler de…"), retiens le ou les tags qui correspondent, cherche les séances passées sur ce tag avec list_sessions (topic) pour faire le lien, et applique ces tags à l'enregistrement. Ne crée jamais de tag : si aucun ne correspond, propose à l'utilisateur d'en créer un dans les réglages du site.
 - Quand l'utilisateur te demande d'enregistrer la séance, rédige un compte-rendu fidèle et détaillé avec save_session. Il est enregistré en brouillon : l'utilisateur le relira, le publiera et choisira de le partager ou non sur le site.
 - Si quelqu'un est en danger ou en détresse, oriente vers les urgences (15, 112) ou le 3114 (prévention du suicide, 24h/24).
 
@@ -96,6 +97,31 @@ function restrictToCouple<T extends { or: (filters: string) => T }>(query: T, au
   return query.or(`author_id.neq.${userId},type.eq.duo,and(status.eq.published,shared.eq.true)`)
 }
 
+async function loadTagNames(supabase: SupabaseClient): Promise<string[]> {
+  const { data } = await supabase.from('tags').select('name')
+  return [...new Set((data ?? []).map((t) => t.name as string))].sort((a, b) => a.localeCompare(b, 'fr'))
+}
+
+function normalizeTag(name: string) {
+  return name.trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
+function splitTags(requested: string[], available: string[]) {
+  const normalized = [...new Set(requested.map(normalizeTag).filter(Boolean))]
+  return {
+    kept: normalized.filter((t) => available.includes(t)),
+    ignored: normalized.filter((t) => !available.includes(t)),
+  }
+}
+
+function ignoredTagsNote(ignored: string[]) {
+  if (!ignored.length) return {}
+  return {
+    ignored_tags: ignored,
+    note: "Ces tags n'existent pas dans l'appli et n'ont pas été appliqués. Propose à l'utilisateur de les créer dans les réglages du site s'il le souhaite.",
+  }
+}
+
 function describeSession(row: Record<string, unknown>, people: People) {
   const authorId = row.author_id as string
   const author = authorId === people.me.id ? people.me.name : (people.partner?.name ?? 'inconnu')
@@ -124,7 +150,11 @@ const contentFields = {
     .describe("Date de la séance au format AAAA-MM-JJ. Par défaut : aujourd'hui."),
   summary: z.string().describe('Résumé détaillé de ce qui a été dit et exploré, en plusieurs paragraphes.'),
   feelings: z.string().describe('Ressentis et besoins exprimés. En duo, précise qui ressent quoi.'),
-  topics: z.array(z.string()).describe('Thèmes courts en minuscules (ex. "communication", "famille").'),
+  topics: z
+    .array(z.string())
+    .describe(
+      "Tags de la séance, choisis uniquement parmi les tags existants (voir available_tags dans get_context ou list_tags). Les tags inconnus sont ignorés.",
+    ),
   quotes: z
     .array(z.string())
     .describe('Phrases importantes, mot pour mot. En duo, préfixe par le prénom : "Prénom : « … »".'),
@@ -144,7 +174,7 @@ export function registerTools(server: McpServer) {
     },
     async ({ audience }, ctx) => {
       const { supabase, userId } = getAuth(ctx as Ctx)
-      const people = await loadPeople(supabase, userId)
+      const [people, availableTags] = await Promise.all([loadPeople(supabase, userId), loadTagNames(supabase)])
       const query = supabase
         .from('sessions')
         .select(SUMMARY_COLUMNS)
@@ -160,8 +190,24 @@ export function registerTools(server: McpServer) {
         in_couple: !!people.partner,
         audience,
         today: today(),
+        available_tags: availableTags,
         recent_sessions: (data ?? []).map((row) => describeSession(row, people)),
       })
+    },
+  )
+
+  server.registerTool(
+    'list_tags',
+    {
+      title: 'Lister les tags',
+      description:
+        "Renvoie les tags définis dans l'appli. Quand l'utilisateur annonce le sujet de la conversation, choisis le ou les tags correspondants dans cette liste.",
+      inputSchema: z.object({}),
+      annotations: { readOnlyHint: true },
+    },
+    async (_args, ctx) => {
+      const { supabase } = getAuth(ctx as Ctx)
+      return json({ tags: await loadTagNames(supabase) })
     },
   )
 
@@ -287,6 +333,8 @@ export function registerTools(server: McpServer) {
         coupleId = people.coupleId
       }
 
+      const tags = splitTags(content.topics, await loadTagNames(supabase))
+
       const { data, error } = await supabase
         .from('sessions')
         .insert({
@@ -294,7 +342,7 @@ export function registerTools(server: McpServer) {
           type,
           couple_id: coupleId,
           session_date: session_date ?? today(),
-          topics: content.topics.map((t) => t.trim().toLowerCase()).filter(Boolean),
+          topics: tags.kept,
           source: 'claude',
           status: 'draft',
         })
@@ -306,6 +354,8 @@ export function registerTools(server: McpServer) {
         saved: true,
         id: data.id,
         title: data.title,
+        tags: tags.kept,
+        ...ignoredTagsNote(tags.ignored),
         message:
           type === 'duo'
             ? 'Séance à deux enregistrée en brouillon. Elle est visible par les deux partenaires sur le site.'
@@ -336,8 +386,11 @@ export function registerTools(server: McpServer) {
       const { supabase } = getAuth(ctx as Ctx)
       const values = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined))
       if (!Object.keys(values).length) return fail('Aucun champ à modifier.')
+      let ignored: string[] = []
       if (Array.isArray(values.topics)) {
-        values.topics = (values.topics as string[]).map((t) => t.trim().toLowerCase()).filter(Boolean)
+        const tags = splitTags(values.topics as string[], await loadTagNames(supabase))
+        values.topics = tags.kept
+        ignored = tags.ignored
       }
 
       const { data, error } = await supabase
@@ -348,7 +401,7 @@ export function registerTools(server: McpServer) {
         .maybeSingle()
       if (error) return fail("La séance n'a pas pu être modifiée.")
       if (!data) return fail("Cette séance n'existe pas ou ne peut pas être modifiée par cet utilisateur.")
-      return json({ updated: true, id: data.id, title: data.title })
+      return json({ updated: true, id: data.id, title: data.title, ...ignoredTagsNote(ignored) })
     },
   )
 }

@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import ListInput from '@/components/ui/ListInput.vue'
-import TagInput from '@/components/ui/TagInput.vue'
+import TagPicker from '@/components/tags/TagPicker.vue'
 import { useCoupleStore } from '@/stores/couple'
 import { useSessionsStore } from '@/stores/sessions'
 import type { SessionContent, SessionType } from '@/types/session'
@@ -186,8 +186,8 @@ function cancel() {
         </div>
 
         <div class="field">
-          <span class="label">Thèmes</span>
-          <TagInput v-model="form.topics" placeholder="communication, famille… (Entrée pour ajouter)" />
+          <span class="label">Tags</span>
+          <TagPicker v-model="form.topics" />
         </div>
       </section>
 

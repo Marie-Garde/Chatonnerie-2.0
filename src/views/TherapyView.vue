@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import TagChip from '@/components/tags/TagChip.vue'
 import { formatSessionDate } from '@/lib/format'
 import { useAuthStore } from '@/stores/auth'
 import { useCoupleStore } from '@/stores/couple'
@@ -8,13 +10,48 @@ import { useSessionsStore } from '@/stores/sessions'
 const auth = useAuthStore()
 const couple = useCoupleStore()
 const sessions = useSessionsStore()
+const route = useRoute()
+const router = useRouter()
 
 const error = ref(false)
 
+const selectedTags = computed(() => {
+  const raw = route.query.tags
+  const value = Array.isArray(raw) ? raw.join(',') : (raw ?? '')
+  return value.split(',').filter(Boolean)
+})
+
+const usedTags = computed(() => {
+  const counts = new Map<string, number>()
+  for (const session of sessions.sessions) {
+    for (const topic of session.topics) counts.set(topic, (counts.get(topic) ?? 0) + 1)
+  }
+  return [...counts.entries()]
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'fr'))
+})
+
+const filteredSessions = computed(() => {
+  if (!selectedTags.value.length) return sessions.sessions
+  return sessions.sessions.filter((s) => selectedTags.value.some((tag) => s.topics.includes(tag)))
+})
+
 const countLabel = computed(() => {
-  const count = sessions.sessions.length
+  const count = filteredSessions.value.length
   return `${count} séance${count > 1 ? 's' : ''}`
 })
+
+function setTags(tags: string[]) {
+  void router.replace({ query: { ...route.query, tags: tags.length ? tags.join(',') : undefined } })
+}
+
+function toggleTag(name: string) {
+  setTags(
+    selectedTags.value.includes(name)
+      ? selectedTags.value.filter((t) => t !== name)
+      : [...selectedTags.value, name],
+  )
+}
 
 onMounted(async () => {
   try {
@@ -37,7 +74,7 @@ const steps = [
       <p class="eyebrow">Thérapie</p>
       <h1 class="title">Un espace pour se comprendre</h1>
       <p class="subtitle">
-        Vos séances, vos comptes-rendus et le dossier du couple, en attendant de pouvoir les apporter à un thérapeute.
+        Vos séances et vos comptes-rendus, en attendant de pouvoir les apporter à un thérapeute.
       </p>
     </header>
 
@@ -59,72 +96,79 @@ const steps = [
         <RouterLink v-if="couple.partner" :to="{ name: 'session-new', query: { type: 'duo' } }" class="btn">
           Séance à deux
         </RouterLink>
-        <button class="btn" type="button">Voir le dossier</button>
       </div>
     </section>
 
-    <div class="grid">
-      <section class="card sessions">
-        <div class="section-head">
-          <h2 class="section-title">Dernières séances</h2>
-          <span v-if="sessions.loaded" class="chip chip-secondary">{{ countLabel }}</span>
-        </div>
+    <section class="card sessions">
+      <div class="section-head">
+        <h2 class="section-title">Séances</h2>
+        <span v-if="sessions.loaded" class="chip chip-secondary">{{ countLabel }}</span>
+      </div>
 
-        <div v-if="!sessions.loaded && !error" class="list">
-          <div v-for="n in 3" :key="n" class="skeleton" />
-        </div>
+      <div v-if="usedTags.length" class="filters">
+        <button
+          v-for="tag in usedTags"
+          :key="tag.name"
+          type="button"
+          class="filter"
+          :aria-pressed="selectedTags.includes(tag.name)"
+          @click="toggleTag(tag.name)"
+        >
+          <TagChip :name="tag.name" :active="selectedTags.includes(tag.name)">
+            <span class="filter-count">{{ tag.count }}</span>
+          </TagChip>
+        </button>
+        <button v-if="selectedTags.length" type="button" class="clear" @click="setTags([])">Tout afficher</button>
+        <RouterLink :to="{ name: 'settings' }" class="manage">Gérer les tags</RouterLink>
+      </div>
 
-        <p v-else-if="error" class="muted">Les séances n'ont pas pu être chargées. Recharge la page pour réessayer.</p>
+      <div v-if="!sessions.loaded && !error" class="list">
+        <div v-for="n in 3" :key="n" class="skeleton" />
+      </div>
 
-        <ul v-else-if="sessions.sessions.length" class="list">
-          <li v-for="session in sessions.sessions" :key="session.id">
-            <RouterLink :to="{ name: 'session', params: { id: session.id } }" class="session">
-              <div class="session-date">
-                <span class="day">{{ formatSessionDate(session.session_date, { day: 'numeric' }) }}</span>
-                <span class="month">{{ formatSessionDate(session.session_date, { month: 'short' }) }}</span>
+      <p v-else-if="error" class="muted">Les séances n'ont pas pu être chargées. Recharge la page pour réessayer.</p>
+
+      <p v-else-if="sessions.sessions.length && !filteredSessions.length" class="muted">
+        Aucune séance avec ces tags.
+      </p>
+
+      <ul v-else-if="filteredSessions.length" class="list">
+        <li v-for="session in filteredSessions" :key="session.id">
+          <RouterLink :to="{ name: 'session', params: { id: session.id } }" class="session">
+            <div class="session-date">
+              <span class="day">{{ formatSessionDate(session.session_date, { day: 'numeric' }) }}</span>
+              <span class="month">{{ formatSessionDate(session.session_date, { month: 'short' }) }}</span>
+            </div>
+            <div class="session-body">
+              <div class="session-top">
+                <span class="session-title">{{ session.title }}</span>
+                <span v-if="session.status === 'draft'" class="chip chip-secondary">Brouillon</span>
               </div>
-              <div class="session-body">
-                <div class="session-top">
-                  <span class="session-title">{{ session.title }}</span>
-                  <span v-if="session.status === 'draft'" class="chip chip-secondary">Brouillon</span>
-                </div>
-                <p v-if="session.summary" class="session-summary">{{ session.summary }}</p>
-                <div class="session-meta">
-                  <span>{{ session.type === 'duo' ? 'À deux' : 'Perso' }}</span>
-                  <span v-if="session.author_id !== auth.user?.id">· {{ couple.nameOf(session.author_id) }}</span>
-                  <span v-else-if="session.type === 'solo'" class="share-state">
-                    · {{ session.shared ? 'Partagée' : 'Privée' }}
-                  </span>
-                  <span v-for="topic in session.topics.slice(0, 3)" :key="topic" class="topic">{{ topic }}</span>
-                </div>
+              <p v-if="session.summary" class="session-summary">{{ session.summary }}</p>
+              <div class="session-meta">
+                <span>{{ session.type === 'duo' ? 'À deux' : 'Perso' }}</span>
+                <span v-if="session.author_id !== auth.user?.id">· {{ couple.nameOf(session.author_id) }}</span>
+                <span v-else-if="session.type === 'solo'" class="share-state">
+                  · {{ session.shared ? 'Partagée' : 'Privée' }}
+                </span>
+                <TagChip v-for="topic in session.topics.slice(0, 4)" :key="topic" :name="topic" small />
               </div>
-            </RouterLink>
-          </li>
-        </ul>
+            </div>
+          </RouterLink>
+        </li>
+      </ul>
 
-        <div v-else class="empty">
-          <div class="empty-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z" />
-            </svg>
-          </div>
-          <p class="empty-title">Votre première séance vous attend</p>
-          <p class="empty-text">Les comptes-rendus enregistrés par Claude apparaîtront ici, les vôtres comme ceux de l'autre.</p>
-          <RouterLink :to="{ name: 'session-new' }" class="btn btn-small empty-cta">Écrire une séance</RouterLink>
+      <div v-else class="empty">
+        <div class="empty-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z" />
+          </svg>
         </div>
-      </section>
-
-      <aside class="side">
-        <section class="card dossier">
-          <h2 class="section-title">Dossier du couple</h2>
-          <p class="muted">La synthèse que Claude met à jour après chaque séance : contexte, sujets en cours, déclics.</p>
-          <div class="dossier-meta">
-            <span>Dernière mise à jour</span>
-            <span class="faint">Jamais</span>
-          </div>
-        </section>
-      </aside>
-    </div>
+        <p class="empty-title">Votre première séance vous attend</p>
+        <p class="empty-text">Les comptes-rendus enregistrés par Claude apparaîtront ici, les vôtres comme ceux de l'autre.</p>
+        <RouterLink :to="{ name: 'session-new' }" class="btn btn-small empty-cta">Écrire une séance</RouterLink>
+      </div>
+    </section>
   </div>
 </template>
 
@@ -213,12 +257,6 @@ const steps = [
   flex-direction: column;
   gap: 10px;
   flex-shrink: 0;
-}
-
-.grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
-  gap: 20px;
 }
 
 .section-head {
@@ -364,44 +402,61 @@ const steps = [
   color: var(--text-faint);
 }
 
-.session-meta span:not(.topic) {
+.session-meta > span:not(.tag) {
   text-transform: capitalize;
 }
 
-.topic {
-  padding: 1px 8px;
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.filter {
+  padding: 0;
+  border: none;
+  background: none;
   border-radius: 999px;
-  border: 1px solid var(--border-strong);
+}
+
+.filter:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.filter-count {
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.clear,
+.manage {
+  padding: 4px 6px;
+  border: none;
+  background: none;
+  font-size: 13px;
+  font-weight: 600;
   color: var(--text-muted);
+}
+
+.clear:hover,
+.manage:hover {
+  color: var(--accent);
+}
+
+.manage {
+  margin-left: auto;
 }
 
 .empty-cta {
   margin-top: 8px;
 }
 
-.side {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
 .muted {
-  margin-top: 8px;
+  margin-top: 16px;
   font-size: 14px;
-  color: var(--text-muted);
-}
-
-.faint {
-  color: var(--text-faint);
-}
-
-.dossier-meta {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 18px;
-  padding-top: 14px;
-  border-top: 1px solid var(--border);
-  font-size: 13px;
   color: var(--text-muted);
 }
 
@@ -417,10 +472,6 @@ const steps = [
 
   .hero-actions {
     flex-direction: row;
-  }
-
-  .grid {
-    grid-template-columns: 1fr;
   }
 }
 </style>

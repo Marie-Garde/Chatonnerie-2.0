@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import TagChip from '@/components/tags/TagChip.vue'
 import ToggleSwitch from '@/components/ui/ToggleSwitch.vue'
 import { formatSessionDate } from '@/lib/format'
 import { useAuthStore } from '@/stores/auth'
@@ -114,7 +115,13 @@ async function remove() {
       <div class="layout">
         <article class="content">
           <section v-if="session.topics.length" class="topics">
-            <span v-for="topic in session.topics" :key="topic" class="chip chip-outline">{{ topic }}</span>
+            <RouterLink
+              v-for="topic in session.topics"
+              :key="topic"
+              :to="{ name: 'therapy', query: { tags: topic } }"
+            >
+              <TagChip :name="topic" />
+            </RouterLink>
           </section>
 
           <section v-if="session.summary" class="card block">

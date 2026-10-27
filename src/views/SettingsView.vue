@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import CoupleSettings from '@/components/couple/CoupleSettings.vue'
+import TagSettings from '@/components/tags/TagSettings.vue'
 import { useAuthStore } from '@/stores/auth'
 import { DEFAULT_THEME, THEMES, type ThemeId } from '@/lib/themes'
 
@@ -33,6 +34,8 @@ async function selectTheme(id: ThemeId) {
     </header>
 
     <CoupleSettings />
+
+    <TagSettings />
 
     <section class="card">
       <div class="section-head">
