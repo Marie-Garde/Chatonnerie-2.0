@@ -1,0 +1,318 @@
+import { z } from 'zod'
+import type { AuthInfo, McpServer } from '@modelcontextprotocol/server'
+import type { SupabaseClient } from '@supabase/supabase-js'
+import { createUserClient } from './supabase.js'
+
+export const SERVER_INSTRUCTIONS = `Chatonnerie est l'espace de thérapie de couple que l'utilisateur partage avec son ou sa partenaire. Tu n'es pas thérapeute : tu aides à réfléchir, à mettre des mots et à préparer le travail avec un futur thérapeute humain.
+
+- Au début de chaque conversation, appelle get_context pour savoir qui te parle, qui est son ou sa partenaire et ce qui s'est passé dans les dernières séances.
+- Quand un sujet a déjà été abordé, retrouve-le avec search_sessions ou get_session plutôt que de faire répéter l'utilisateur.
+- Les séances de l'autre partenaire que tu peux lire ont été partagées volontairement. Utilise-les avec tact : ne cite pas mot pour mot ce que l'autre a confié sans que ce soit utile, et ne prends pas parti.
+- Quand l'utilisateur te demande d'enregistrer la séance, rédige un compte-rendu fidèle et détaillé avec save_session. Il est enregistré en brouillon : l'utilisateur le relira, le publiera et choisira de le partager ou non sur le site.
+- Si quelqu'un est en danger ou en détresse, oriente vers les urgences (15, 112) ou le 3114 (prévention du suicide, 24h/24).`
+
+type Ctx = { http?: { authInfo?: AuthInfo } }
+
+const SUMMARY_COLUMNS = 'id, author_id, type, status, shared, source, title, session_date, topics, summary'
+
+function getAuth(ctx: Ctx) {
+  const authInfo = ctx.http?.authInfo
+  const userId = authInfo?.extra?.userId
+  if (!authInfo || typeof userId !== 'string') throw new Error('Non authentifié.')
+  return { supabase: createUserClient(authInfo.token), userId }
+}
+
+function json(value: unknown) {
+  return { content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }] }
+}
+
+function fail(message: string) {
+  return { content: [{ type: 'text' as const, text: message }], isError: true }
+}
+
+function today() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Paris' }).format(new Date())
+}
+
+function excerpt(text: string, max = 280) {
+  return text.length > max ? `${text.slice(0, max).trimEnd()}…` : text
+}
+
+interface People {
+  me: { id: string; name: string }
+  partner: { id: string; name: string } | null
+  coupleId: string | null
+}
+
+async function loadPeople(supabase: SupabaseClient, userId: string): Promise<People> {
+  const { data: membership } = await supabase
+    .from('couple_members')
+    .select('couple_id')
+    .eq('user_id', userId)
+    .maybeSingle()
+
+  const coupleId: string | null = membership?.couple_id ?? null
+  let memberIds = [userId]
+  if (coupleId) {
+    const { data: members } = await supabase.from('couple_members').select('user_id').eq('couple_id', coupleId)
+    memberIds = (members ?? []).map((m) => m.user_id as string)
+  }
+
+  const { data: profiles } = await supabase.from('profiles').select('id, display_name').in('id', memberIds)
+  const nameOf = (id: string) => profiles?.find((p) => p.id === id)?.display_name ?? 'inconnu'
+  const partnerId = memberIds.find((id) => id !== userId)
+
+  return {
+    me: { id: userId, name: nameOf(userId) },
+    partner: partnerId ? { id: partnerId, name: nameOf(partnerId) } : null,
+    coupleId,
+  }
+}
+
+function describeSession(row: Record<string, unknown>, people: People) {
+  const authorId = row.author_id as string
+  const author = authorId === people.me.id ? people.me.name : (people.partner?.name ?? 'inconnu')
+  return {
+    id: row.id,
+    title: row.title,
+    date: row.session_date,
+    type: row.type === 'duo' ? 'à deux' : 'perso',
+    author,
+    written_by_me: authorId === people.me.id,
+    status: row.status === 'published' ? 'publiée' : 'brouillon',
+    shared_with_partner: row.type === 'duo' ? true : row.shared,
+    source: row.source === 'claude' ? 'rédigée par Claude' : 'écrite à la main',
+    topics: row.topics,
+    ...(typeof row.summary === 'string' ? { summary_excerpt: excerpt(row.summary) } : {}),
+  }
+}
+
+const contentFields = {
+  title: z.string().min(1).max(200).describe('Titre court et parlant de la séance.'),
+  session_date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional()
+    .describe("Date de la séance au format AAAA-MM-JJ. Par défaut : aujourd'hui."),
+  summary: z.string().describe('Résumé détaillé de ce qui a été dit et exploré, en plusieurs paragraphes.'),
+  feelings: z.string().describe('Ressentis et besoins exprimés. En duo, précise qui ressent quoi.'),
+  topics: z.array(z.string()).describe('Thèmes courts en minuscules (ex. "communication", "famille").'),
+  quotes: z
+    .array(z.string())
+    .describe('Phrases importantes, mot pour mot. En duo, préfixe par le prénom : "Prénom : « … »".'),
+  open_questions: z.array(z.string()).describe('Questions qui restent à creuser.'),
+  next_steps: z.array(z.string()).describe('Exercices, engagements ou pistes à essayer.'),
+}
+
+export function registerTools(server: McpServer) {
+  server.registerTool(
+    'get_context',
+    {
+      title: 'Contexte',
+      description:
+        "À appeler au début de chaque conversation. Renvoie qui est l'utilisateur, son ou sa partenaire et les 10 dernières séances accessibles.",
+      inputSchema: z.object({}),
+      annotations: { readOnlyHint: true },
+    },
+    async (_args, ctx) => {
+      const { supabase, userId } = getAuth(ctx as Ctx)
+      const people = await loadPeople(supabase, userId)
+      const { data, error } = await supabase
+        .from('sessions')
+        .select(SUMMARY_COLUMNS)
+        .order('session_date', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(10)
+      if (error) return fail('Impossible de charger les séances.')
+
+      return json({
+        user: people.me.name,
+        partner: people.partner?.name ?? null,
+        in_couple: !!people.partner,
+        today: today(),
+        recent_sessions: (data ?? []).map((row) => describeSession(row, people)),
+      })
+    },
+  )
+
+  server.registerTool(
+    'list_sessions',
+    {
+      title: 'Lister les séances',
+      description: 'Liste les séances accessibles, des plus récentes aux plus anciennes, avec un extrait du résumé.',
+      inputSchema: z.object({
+        type: z.enum(['solo', 'duo']).optional().describe('solo = séance perso, duo = séance à deux.'),
+        author: z.enum(['me', 'partner']).optional(),
+        topic: z.string().optional().describe('Filtrer sur un thème exact.'),
+        limit: z.number().int().min(1).max(50).default(20),
+        offset: z.number().int().min(0).default(0),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    async ({ type, author, topic, limit, offset }, ctx) => {
+      const { supabase, userId } = getAuth(ctx as Ctx)
+      const people = await loadPeople(supabase, userId)
+
+      let query = supabase
+        .from('sessions')
+        .select(SUMMARY_COLUMNS)
+        .order('session_date', { ascending: false })
+        .order('created_at', { ascending: false })
+        .range(offset, offset + limit - 1)
+      if (type) query = query.eq('type', type)
+      if (author === 'me') query = query.eq('author_id', userId)
+      if (author === 'partner') {
+        if (!people.partner) return json({ sessions: [] })
+        query = query.eq('author_id', people.partner.id)
+      }
+      if (topic) query = query.contains('topics', [topic.toLowerCase()])
+
+      const { data, error } = await query
+      if (error) return fail('Impossible de lister les séances.')
+      return json({ sessions: (data ?? []).map((row) => describeSession(row, people)) })
+    },
+  )
+
+  server.registerTool(
+    'get_session',
+    {
+      title: 'Lire une séance',
+      description: "Renvoie le compte-rendu complet d'une séance.",
+      inputSchema: z.object({ id: z.string().uuid() }),
+      annotations: { readOnlyHint: true },
+    },
+    async ({ id }, ctx) => {
+      const { supabase, userId } = getAuth(ctx as Ctx)
+      const [people, { data, error }] = await Promise.all([
+        loadPeople(supabase, userId),
+        supabase.from('sessions').select('*').eq('id', id).maybeSingle(),
+      ])
+      if (error) return fail('Impossible de lire la séance.')
+      if (!data) return fail("Cette séance n'existe pas ou n'est pas accessible.")
+
+      const { summary_excerpt: _excerpt, ...meta } = describeSession(data, people)
+      return json({
+        ...meta,
+        summary: data.summary,
+        feelings: data.feelings,
+        quotes: data.quotes,
+        open_questions: data.open_questions,
+        next_steps: data.next_steps,
+      })
+    },
+  )
+
+  server.registerTool(
+    'search_sessions',
+    {
+      title: 'Chercher dans les séances',
+      description:
+        'Recherche plein texte (en français) dans les titres, résumés, ressentis, citations, questions et pistes de toutes les séances accessibles.',
+      inputSchema: z.object({
+        query: z.string().min(1).describe('Mots-clés, ex. "belle-mère vacances".'),
+        limit: z.number().int().min(1).max(30).default(10),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    async ({ query, limit }, ctx) => {
+      const { supabase, userId } = getAuth(ctx as Ctx)
+      const people = await loadPeople(supabase, userId)
+      const { data, error } = await supabase
+        .from('sessions')
+        .select(SUMMARY_COLUMNS)
+        .textSearch('search', query, { config: 'french', type: 'websearch' })
+        .order('session_date', { ascending: false })
+        .limit(limit)
+      if (error) return fail('La recherche a échoué.')
+      return json({ results: (data ?? []).map((row) => describeSession(row, people)) })
+    },
+  )
+
+  server.registerTool(
+    'save_session',
+    {
+      title: 'Enregistrer la séance',
+      description:
+        "Enregistre le compte-rendu de la séance en cours, en brouillon. À utiliser quand l'utilisateur le demande. Type 'duo' seulement si les deux partenaires participaient à la conversation.",
+      inputSchema: z.object({
+        type: z.enum(['solo', 'duo']).describe('solo = séance perso, duo = les deux partenaires étaient présents.'),
+        ...contentFields,
+      }),
+    },
+    async ({ type, session_date, ...content }, ctx) => {
+      const { supabase, userId } = getAuth(ctx as Ctx)
+
+      let coupleId: string | null = null
+      if (type === 'duo') {
+        const people = await loadPeople(supabase, userId)
+        if (!people.partner || !people.coupleId) {
+          return fail("Impossible d'enregistrer une séance à deux : l'utilisateur n'a pas encore de partenaire lié.")
+        }
+        coupleId = people.coupleId
+      }
+
+      const { data, error } = await supabase
+        .from('sessions')
+        .insert({
+          ...content,
+          type,
+          couple_id: coupleId,
+          session_date: session_date ?? today(),
+          topics: content.topics.map((t) => t.trim().toLowerCase()).filter(Boolean),
+          source: 'claude',
+          status: 'draft',
+        })
+        .select('id, title')
+        .single()
+      if (error) return fail("La séance n'a pas pu être enregistrée.")
+
+      return json({
+        saved: true,
+        id: data.id,
+        title: data.title,
+        message:
+          type === 'duo'
+            ? 'Séance à deux enregistrée en brouillon. Elle est visible par les deux partenaires sur le site.'
+            : "Séance enregistrée en brouillon. L'utilisateur peut la relire, la publier et choisir de la partager sur le site.",
+      })
+    },
+  )
+
+  server.registerTool(
+    'update_session',
+    {
+      title: 'Modifier une séance',
+      description:
+        "Corrige ou complète une séance existante. Seuls les champs fournis sont modifiés. La publication et le partage se décident uniquement sur le site.",
+      inputSchema: z.object({
+        id: z.string().uuid(),
+        title: contentFields.title.optional(),
+        session_date: contentFields.session_date,
+        summary: contentFields.summary.optional(),
+        feelings: contentFields.feelings.optional(),
+        topics: contentFields.topics.optional(),
+        quotes: contentFields.quotes.optional(),
+        open_questions: contentFields.open_questions.optional(),
+        next_steps: contentFields.next_steps.optional(),
+      }),
+    },
+    async ({ id, ...patch }, ctx) => {
+      const { supabase } = getAuth(ctx as Ctx)
+      const values = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined))
+      if (!Object.keys(values).length) return fail('Aucun champ à modifier.')
+      if (Array.isArray(values.topics)) {
+        values.topics = (values.topics as string[]).map((t) => t.trim().toLowerCase()).filter(Boolean)
+      }
+
+      const { data, error } = await supabase
+        .from('sessions')
+        .update(values)
+        .eq('id', id)
+        .select('id, title')
+        .maybeSingle()
+      if (error) return fail("La séance n'a pas pu être modifiée.")
+      if (!data) return fail("Cette séance n'existe pas ou ne peut pas être modifiée par cet utilisateur.")
+      return json({ updated: true, id: data.id, title: data.title })
+    },
+  )
+}
