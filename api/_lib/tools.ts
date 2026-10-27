@@ -9,7 +9,14 @@ export const SERVER_INSTRUCTIONS = `Chatonnerie est l'espace de thérapie de cou
 - Quand un sujet a déjà été abordé, retrouve-le avec search_sessions ou get_session plutôt que de faire répéter l'utilisateur.
 - Les séances de l'autre partenaire que tu peux lire ont été partagées volontairement. Utilise-les avec tact : ne cite pas mot pour mot ce que l'autre a confié sans que ce soit utile, et ne prends pas parti.
 - Quand l'utilisateur te demande d'enregistrer la séance, rédige un compte-rendu fidèle et détaillé avec save_session. Il est enregistré en brouillon : l'utilisateur le relira, le publiera et choisira de le partager ou non sur le site.
-- Si quelqu'un est en danger ou en détresse, oriente vers les urgences (15, 112) ou le 3114 (prévention du suicide, 24h/24).`
+- Si quelqu'un est en danger ou en détresse, oriente vers les urgences (15, 112) ou le 3114 (prévention du suicide, 24h/24).
+
+Séances à deux :
+- Une séance à deux se fait dans le Claude d'un seul des partenaires, les deux étant présents. Si l'utilisateur annonce une séance à deux, ou si les deux partenaires semblent participer, confirme-le avant de commencer.
+- Pendant toute la séance à deux, passe audience: "couple" à tous les outils de lecture. Les séances privées et les brouillons non partagés du titulaire du compte sont alors exclus : n'y fais jamais allusion devant le partenaire, même si tu t'en souviens d'une conversation précédente.
+- Demande que chaque message commence par le prénom de la personne qui parle. Si ce n'est pas clair, demande qui s'exprime plutôt que de deviner.
+- Reste neutre : donne la parole aux deux à tour de rôle, reformule le point de vue de chacun, ne tranche pas qui a raison. Aide-les à exprimer leurs besoins plutôt que leurs reproches.
+- À la fin, enregistre avec save_session et type "duo", en attribuant clairement les ressentis et les citations à chacun.`
 
 type Ctx = { http?: { authInfo?: AuthInfo } }
 
@@ -69,6 +76,26 @@ async function loadPeople(supabase: SupabaseClient, userId: string): Promise<Peo
   }
 }
 
+const audienceField = z
+  .enum(['me', 'couple'])
+  .default('me')
+  .describe(
+    "'couple' pendant une séance à deux : exclut les séances privées et les brouillons de l'utilisateur pour ne rien révéler au partenaire présent. 'me' sinon.",
+  )
+
+type Audience = z.infer<typeof audienceField>
+
+function isVisibleToPartner(row: Record<string, unknown>, people: People) {
+  if (row.type === 'duo') return true
+  if (row.author_id !== people.me.id) return true
+  return row.status === 'published' && row.shared === true
+}
+
+function restrictToCouple<T extends { or: (filters: string) => T }>(query: T, audience: Audience, userId: string) {
+  if (audience !== 'couple') return query
+  return query.or(`author_id.neq.${userId},type.eq.duo,and(status.eq.published,shared.eq.true)`)
+}
+
 function describeSession(row: Record<string, unknown>, people: People) {
   const authorId = row.author_id as string
   const author = authorId === people.me.id ? people.me.name : (people.partner?.name ?? 'inconnu')
@@ -81,6 +108,7 @@ function describeSession(row: Record<string, unknown>, people: People) {
     written_by_me: authorId === people.me.id,
     status: row.status === 'published' ? 'publiée' : 'brouillon',
     shared_with_partner: row.type === 'duo' ? true : row.shared,
+    visible_to_partner: isVisibleToPartner(row, people),
     source: row.source === 'claude' ? 'rédigée par Claude' : 'écrite à la main',
     topics: row.topics,
     ...(typeof row.summary === 'string' ? { summary_excerpt: excerpt(row.summary) } : {}),
@@ -111,24 +139,26 @@ export function registerTools(server: McpServer) {
       title: 'Contexte',
       description:
         "À appeler au début de chaque conversation. Renvoie qui est l'utilisateur, son ou sa partenaire et les 10 dernières séances accessibles.",
-      inputSchema: z.object({}),
+      inputSchema: z.object({ audience: audienceField }),
       annotations: { readOnlyHint: true },
     },
-    async (_args, ctx) => {
+    async ({ audience }, ctx) => {
       const { supabase, userId } = getAuth(ctx as Ctx)
       const people = await loadPeople(supabase, userId)
-      const { data, error } = await supabase
+      const query = supabase
         .from('sessions')
         .select(SUMMARY_COLUMNS)
         .order('session_date', { ascending: false })
         .order('created_at', { ascending: false })
         .limit(10)
+      const { data, error } = await restrictToCouple(query, audience, userId)
       if (error) return fail('Impossible de charger les séances.')
 
       return json({
         user: people.me.name,
         partner: people.partner?.name ?? null,
         in_couple: !!people.partner,
+        audience,
         today: today(),
         recent_sessions: (data ?? []).map((row) => describeSession(row, people)),
       })
@@ -146,10 +176,11 @@ export function registerTools(server: McpServer) {
         topic: z.string().optional().describe('Filtrer sur un thème exact.'),
         limit: z.number().int().min(1).max(50).default(20),
         offset: z.number().int().min(0).default(0),
+        audience: audienceField,
       }),
       annotations: { readOnlyHint: true },
     },
-    async ({ type, author, topic, limit, offset }, ctx) => {
+    async ({ type, author, topic, limit, offset, audience }, ctx) => {
       const { supabase, userId } = getAuth(ctx as Ctx)
       const people = await loadPeople(supabase, userId)
 
@@ -167,7 +198,7 @@ export function registerTools(server: McpServer) {
       }
       if (topic) query = query.contains('topics', [topic.toLowerCase()])
 
-      const { data, error } = await query
+      const { data, error } = await restrictToCouple(query, audience, userId)
       if (error) return fail('Impossible de lister les séances.')
       return json({ sessions: (data ?? []).map((row) => describeSession(row, people)) })
     },
@@ -178,10 +209,10 @@ export function registerTools(server: McpServer) {
     {
       title: 'Lire une séance',
       description: "Renvoie le compte-rendu complet d'une séance.",
-      inputSchema: z.object({ id: z.string().uuid() }),
+      inputSchema: z.object({ id: z.string().uuid(), audience: audienceField }),
       annotations: { readOnlyHint: true },
     },
-    async ({ id }, ctx) => {
+    async ({ id, audience }, ctx) => {
       const { supabase, userId } = getAuth(ctx as Ctx)
       const [people, { data, error }] = await Promise.all([
         loadPeople(supabase, userId),
@@ -189,6 +220,9 @@ export function registerTools(server: McpServer) {
       ])
       if (error) return fail('Impossible de lire la séance.')
       if (!data) return fail("Cette séance n'existe pas ou n'est pas accessible.")
+      if (audience === 'couple' && !isVisibleToPartner(data, people)) {
+        return fail("Séance privée : elle ne doit pas être utilisée pendant une séance à deux.")
+      }
 
       const { summary_excerpt: _excerpt, ...meta } = describeSession(data, people)
       return json({
@@ -211,18 +245,20 @@ export function registerTools(server: McpServer) {
       inputSchema: z.object({
         query: z.string().min(1).describe('Mots-clés, ex. "belle-mère vacances".'),
         limit: z.number().int().min(1).max(30).default(10),
+        audience: audienceField,
       }),
       annotations: { readOnlyHint: true },
     },
-    async ({ query, limit }, ctx) => {
+    async ({ query, limit, audience }, ctx) => {
       const { supabase, userId } = getAuth(ctx as Ctx)
       const people = await loadPeople(supabase, userId)
-      const { data, error } = await supabase
+      const search = supabase
         .from('sessions')
         .select(SUMMARY_COLUMNS)
         .textSearch('search', query, { config: 'french', type: 'websearch' })
         .order('session_date', { ascending: false })
         .limit(limit)
+      const { data, error } = await restrictToCouple(search, audience, userId)
       if (error) return fail('La recherche a échoué.')
       return json({ results: (data ?? []).map((row) => describeSession(row, people)) })
     },

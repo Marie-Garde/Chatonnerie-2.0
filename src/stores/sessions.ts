@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { supabase } from '@/lib/supabase'
-import type { SessionContent, SessionPatch, TherapySession } from '@/types/session'
+import type { SessionContent, SessionPatch, SessionType, TherapySession } from '@/types/session'
 
 export const useSessionsStore = defineStore('sessions', () => {
   const sessions = ref<TherapySession[]>([])
@@ -40,10 +40,10 @@ export const useSessionsStore = defineStore('sessions', () => {
     return data as TherapySession | null
   }
 
-  async function create(content: SessionContent) {
+  async function create(content: SessionContent, type: SessionType = 'solo', coupleId: string | null = null) {
     const { data, error } = await supabase
       .from('sessions')
-      .insert({ ...content, type: 'solo' })
+      .insert({ ...content, type, couple_id: type === 'duo' ? coupleId : null })
       .select('*')
       .single()
     if (error) throw error

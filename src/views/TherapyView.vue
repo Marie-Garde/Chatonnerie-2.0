@@ -56,6 +56,9 @@ const steps = [
       </div>
       <div class="hero-actions">
         <RouterLink :to="{ name: 'session-new' }" class="btn btn-primary">Nouvelle séance</RouterLink>
+        <RouterLink v-if="couple.partner" :to="{ name: 'session-new', query: { type: 'duo' } }" class="btn">
+          Séance à deux
+        </RouterLink>
         <button class="btn" type="button">Voir le dossier</button>
       </div>
     </section>

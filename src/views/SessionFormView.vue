@@ -3,15 +3,26 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import ListInput from '@/components/ui/ListInput.vue'
 import TagInput from '@/components/ui/TagInput.vue'
+import { useCoupleStore } from '@/stores/couple'
 import { useSessionsStore } from '@/stores/sessions'
-import type { SessionContent } from '@/types/session'
+import type { SessionContent, SessionType } from '@/types/session'
 
 const route = useRoute()
 const router = useRouter()
+const couple = useCoupleStore()
 const sessions = useSessionsStore()
 
 const sessionId = computed(() => (typeof route.params.id === 'string' ? route.params.id : null))
 const isEdit = computed(() => !!sessionId.value)
+
+const type = ref<SessionType>(route.query.type === 'duo' ? 'duo' : 'solo')
+const canDuo = computed(() => !!couple.partner && !!couple.coupleId)
+
+const subtitle = computed(() =>
+  type.value === 'duo'
+    ? `Elle sera visible par toi et ${couple.partner?.display_name ?? 'ton ou ta partenaire'}, et modifiable par vous deux.`
+    : 'Elle sera enregistrée en brouillon. Tu choisiras ensuite si tu la publies et si tu la partages.',
+)
 
 function today() {
   const now = new Date()
@@ -43,6 +54,7 @@ onMounted(async () => {
       error.value = 'Cette séance est introuvable.'
       return
     }
+    type.value = session.type
     Object.assign(form, {
       title: session.title,
       session_date: session.session_date,
@@ -74,6 +86,10 @@ async function submit() {
     error.value = 'Choisis une date.'
     return
   }
+  if (!isEdit.value && type.value === 'duo' && !canDuo.value) {
+    error.value = 'Invite ton ou ta partenaire dans les réglages pour faire une séance à deux.'
+    return
+  }
 
   const content: SessionContent = {
     title: form.title.trim(),
@@ -90,7 +106,7 @@ async function submit() {
   try {
     const saved = sessionId.value
       ? await sessions.update(sessionId.value, content)
-      : await sessions.create(content)
+      : await sessions.create(content, type.value, couple.coupleId)
     await router.push({ name: 'session', params: { id: saved.id } })
   } catch {
     error.value = 'La séance n’a pas pu être enregistrée. Réessaie dans un instant.'
@@ -115,16 +131,41 @@ function cancel() {
     </RouterLink>
 
     <header class="page-header">
-      <p class="eyebrow">Séance perso</p>
+      <p class="eyebrow">{{ type === 'duo' ? 'Séance à deux' : 'Séance perso' }}</p>
       <h1 class="title">{{ isEdit ? 'Modifier la séance' : 'Nouvelle séance' }}</h1>
-      <p class="subtitle">
-        Elle sera enregistrée en brouillon. Tu choisiras ensuite si tu la publies et si tu la partages.
-      </p>
+      <p class="subtitle">{{ subtitle }}</p>
     </header>
 
     <div v-if="loading" class="card placeholder" />
 
     <form v-else class="form" novalidate @submit.prevent="submit">
+      <div v-if="!isEdit" class="type-picker" role="radiogroup" aria-label="Type de séance">
+        <button
+          type="button"
+          role="radio"
+          class="type-option"
+          :class="{ active: type === 'solo' }"
+          :aria-checked="type === 'solo'"
+          @click="type = 'solo'"
+        >
+          <span class="type-name">Perso</span>
+          <span class="type-description">Toi seul·e, tu décides de la partager ou non</span>
+        </button>
+        <button
+          type="button"
+          role="radio"
+          class="type-option"
+          :class="{ active: type === 'duo', locked: !canDuo }"
+          :aria-checked="type === 'duo'"
+          @click="type = 'duo'"
+        >
+          <span class="type-name">À deux</span>
+          <span class="type-description">
+            {{ canDuo ? `Avec ${couple.partner?.display_name}, toujours visible par vous deux` : 'Invite d’abord ton ou ta partenaire' }}
+          </span>
+        </button>
+      </div>
+
       <section class="card group">
         <div class="row">
           <label class="field grow">
@@ -225,6 +266,52 @@ function cancel() {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.type-picker {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.type-option {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  text-align: left;
+  transition:
+    border-color 0.2s,
+    background-color 0.2s;
+}
+
+.type-option:hover {
+  border-color: var(--border-strong);
+}
+
+.type-option.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.type-option.locked .type-description {
+  color: var(--text-faint);
+}
+
+.type-name {
+  font-weight: 600;
+}
+
+.type-option.active .type-name {
+  color: var(--accent);
+}
+
+.type-description {
+  font-size: 13px;
+  color: var(--text-muted);
 }
 
 .group {
