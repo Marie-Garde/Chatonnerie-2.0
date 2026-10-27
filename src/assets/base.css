@@ -97,7 +97,7 @@
   --font-display: 'Fraunces', Georgia, serif;
 
   --sidebar-width: 240px;
-  --mobile-nav-offset: calc(84px + env(safe-area-inset-bottom));
+  --mobile-nav-offset: calc(12px + env(safe-area-inset-bottom));
 
   color-scheme: dark;
 }
@@ -107,6 +107,11 @@
 *::after {
   box-sizing: border-box;
   margin: 0;
+}
+
+html,
+body {
+  overflow-x: clip;
 }
 
 body {

@@ -1,9 +1,35 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
+const route = useRoute()
 const initial = computed(() => auth.displayName.charAt(0).toUpperCase())
+
+const open = ref(false)
+
+function onKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') open.value = false
+}
+
+watch(
+  () => route.fullPath,
+  () => (open.value = false),
+)
+
+watch(open, (value) => {
+  document.body.style.overflow = value ? 'hidden' : ''
+  if (value) document.addEventListener('keydown', onKeydown)
+  else document.removeEventListener('keydown', onKeydown)
+})
+
+onBeforeUnmount(() => {
+  document.body.style.overflow = ''
+  document.removeEventListener('keydown', onKeydown)
+})
+
+const currentLabel = computed(() => links.find((l) => route.path.startsWith(l.to))?.label ?? '')
 
 const icons = {
   heart: ['M19.5 12.6 12 20l-7.5-7.4A5 5 0 1 1 12 6a5 5 0 1 1 7.5 6.6z'],
@@ -29,7 +55,38 @@ const links: { to: string; label: string; icon: keyof typeof icons }[] = [
 </script>
 
 <template>
-  <aside class="sidenav">
+  <header class="mobile-bar">
+    <RouterLink to="/" class="mobile-brand" aria-label="Chatonnerie">
+      <span class="brand-mark small">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">
+            <ellipse cx="6" cy="9" rx="2" ry="2.6" />
+            <ellipse cx="10" cy="5.5" rx="2" ry="2.6" />
+            <ellipse cx="14" cy="5.5" rx="2" ry="2.6" />
+            <ellipse cx="18" cy="9" rx="2" ry="2.6" />
+            <path d="M12 11c-3.2 0-6 3.4-6 6.2 0 1.8 1.4 2.8 3 2.8 1.2 0 2-.6 3-.6s1.8.6 3 .6c1.6 0 3-1 3-2.8C18 14.4 15.2 11 12 11z" />
+          </svg>
+      </span>
+      <span class="mobile-title">{{ currentLabel || 'Chatonnerie' }}</span>
+    </RouterLink>
+    <button
+      class="burger"
+      type="button"
+      :aria-expanded="open"
+      aria-controls="main-nav"
+      :aria-label="open ? 'Fermer le menu' : 'Ouvrir le menu'"
+      @click="open = !open"
+    >
+      <span class="burger-lines" :class="{ open }">
+        <span />
+        <span />
+        <span />
+      </span>
+    </button>
+  </header>
+
+  <div v-if="open" class="backdrop" aria-hidden="true" @click="open = false" />
+
+  <aside id="main-nav" class="sidenav" :class="{ open }">
     <RouterLink to="/" class="brand">
       <span class="brand-mark">
         <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">
@@ -243,35 +300,151 @@ const links: { to: string; label: string; icon: keyof typeof icons }[] = [
   color: var(--secondary);
 }
 
+.mobile-bar,
+.backdrop {
+  display: none;
+}
+
 @media (max-width: 768px) {
+  .mobile-bar {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: calc(10px + env(safe-area-inset-top)) 12px 10px 16px;
+    background: color-mix(in srgb, var(--bg-deep) 88%, transparent);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .mobile-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .brand-mark.small {
+    width: 34px;
+    height: 34px;
+    flex-shrink: 0;
+  }
+
+  .mobile-title {
+    overflow: hidden;
+    font-family: var(--font-display);
+    font-size: 19px;
+    font-weight: 500;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .burger {
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    border: none;
+    border-radius: var(--radius);
+    background: transparent;
+    color: var(--text);
+  }
+
+  .burger:active {
+    background: var(--surface);
+  }
+
+  .burger-lines {
+    position: relative;
+    width: 20px;
+    height: 14px;
+  }
+
+  .burger-lines span {
+    position: absolute;
+    left: 0;
+    width: 100%;
+    height: 2px;
+    border-radius: 2px;
+    background: currentColor;
+    transition:
+      transform 0.25s,
+      opacity 0.2s,
+      top 0.25s;
+  }
+
+  .burger-lines span:nth-child(1) {
+    top: 0;
+  }
+
+  .burger-lines span:nth-child(2) {
+    top: 6px;
+  }
+
+  .burger-lines span:nth-child(3) {
+    top: 12px;
+  }
+
+  .burger-lines.open span:nth-child(1) {
+    top: 6px;
+    transform: rotate(45deg);
+  }
+
+  .burger-lines.open span:nth-child(2) {
+    opacity: 0;
+  }
+
+  .burger-lines.open span:nth-child(3) {
+    top: 6px;
+    transform: rotate(-45deg);
+  }
+
+  .backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    display: block;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(2px);
+    animation: fade 0.2s ease-out;
+  }
+
   .sidenav {
     position: fixed;
-    top: auto;
+    top: 0;
     bottom: 0;
     left: 0;
-    right: 0;
-    z-index: 10;
-    flex-direction: row;
-    justify-content: center;
-    width: 100%;
-    height: auto;
-    padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
-    border-right: none;
-    border-top: 1px solid var(--border);
+    z-index: 50;
+    width: min(300px, 84vw);
+    height: 100%;
+    padding: calc(24px + env(safe-area-inset-top)) 18px calc(20px + env(safe-area-inset-bottom));
+    visibility: hidden;
+    transform: translateX(-100%);
+    transition:
+      transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1),
+      visibility 0s linear 0.28s;
   }
 
-  .brand,
-  .nav-label,
-  .sidenav-footer {
-    display: none;
+  .sidenav.open {
+    visibility: visible;
+    transform: translateX(0);
+    box-shadow: 12px 0 40px rgba(0, 0, 0, 0.4);
+    transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
   }
 
-  .nav {
-    flex-direction: row;
+  .nav-link {
+    padding: 13px 12px;
+    font-size: 16px;
   }
+}
 
-  .nav-link.router-link-active::before {
-    display: none;
+@keyframes fade {
+  from {
+    opacity: 0;
   }
 }
 </style>

@@ -317,7 +317,7 @@ const ideasForMe = computed(() => pickExamples(mine.value, 'positive'))
 
 .rankings {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 24px;
 }
 
@@ -437,7 +437,7 @@ const ideasForMe = computed(() => pickExamples(mine.value, 'positive'))
 
 .compare {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 24px;
 }
 
@@ -537,7 +537,7 @@ const ideasForMe = computed(() => pickExamples(mine.value, 'positive'))
 @media (max-width: 760px) {
   .rankings,
   .compare {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .save-bar {

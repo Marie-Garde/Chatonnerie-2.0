@@ -61,6 +61,12 @@
   padding: 22px 24px;
 }
 
+@media (max-width: 768px) {
+  .card {
+    padding: 18px 16px;
+  }
+}
+
 .chip {
   display: inline-flex;
   align-items: center;

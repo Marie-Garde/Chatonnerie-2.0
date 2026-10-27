@@ -78,6 +78,7 @@ watch(
 .app-main {
   flex: 1;
   min-width: 0;
+  overflow-x: clip;
   padding: 40px 48px 64px;
 }
 
@@ -87,7 +88,7 @@ watch(
   }
 
   .app-main {
-    padding: calc(20px + env(safe-area-inset-top)) 16px calc(var(--mobile-nav-offset) + 16px);
+    padding: 20px 16px calc(32px + env(safe-area-inset-bottom));
   }
 }
 </style>

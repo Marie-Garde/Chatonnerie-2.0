@@ -364,9 +364,11 @@ const steps = [
     transform 0.15s;
 }
 
-.session:hover {
-  border-color: var(--accent-line);
-  transform: translateX(2px);
+@media (hover: hover) {
+  .session:hover {
+    border-color: var(--accent-line);
+    transform: translateX(2px);
+  }
 }
 
 .session-date {
@@ -559,7 +561,7 @@ const steps = [
   }
 
   .steps {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .hero-actions {
@@ -567,7 +569,7 @@ const steps = [
   }
 
   .grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 </style>

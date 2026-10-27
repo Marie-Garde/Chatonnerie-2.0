@@ -183,7 +183,7 @@ async function remove(item: Landmark) {
 
 .grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
   align-items: start;
 }
@@ -308,7 +308,7 @@ async function remove(item: Landmark) {
 
 @media (max-width: 760px) {
   .grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 </style>
