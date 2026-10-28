@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
+import BilanSection from '@/components/relation/BilanSection.vue'
 import LandmarksSection from '@/components/relation/LandmarksSection.vue'
 import LanguageSection from '@/components/relation/LanguageSection.vue'
 import ManualSection from '@/components/relation/ManualSection.vue'
@@ -21,6 +22,7 @@ const tabs = [
 ] as const
 
 const sections = [
+  { id: 'bilan', label: 'Bilan' },
   { id: 'amour', label: "Langages de l'amour" },
   { id: 'excuses', label: 'Langages des excuses' },
   { id: 'mode-emploi', label: "Mode d'emploi" },
@@ -52,6 +54,7 @@ watch(() => couple.coupleId, load)
         <PageTabs v-slot="{ active: section }" :tabs="sections" label="Thèmes de Nous" query-key="section" variant="pills">
           <div v-if="!relation.loaded && !error" class="card skeleton" />
           <p v-else-if="error" class="card error">Ces informations n'ont pas pu être chargées. Recharge la page pour réessayer.</p>
+          <BilanSection v-else-if="section === 'bilan'" />
           <LanguageSection v-else-if="section === 'amour'" key="love" kind="love" />
           <LanguageSection v-else-if="section === 'excuses'" key="apology" kind="apology" />
           <ManualSection v-else-if="section === 'mode-emploi'" />

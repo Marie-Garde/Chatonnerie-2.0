@@ -9,6 +9,7 @@ export const SERVER_INSTRUCTIONS = `Chatonnerie est l'espace de thérapie de cou
 - Quand un sujet a déjà été abordé, retrouve-le avec search_sessions ou get_session plutôt que de faire répéter l'utilisateur.
 - Les séances de l'autre partenaire que tu peux lire ont été partagées volontairement. Utilise-les avec tact : ne cite pas mot pour mot ce que l'autre a confié sans que ce soit utile, et ne prends pas parti.
 - Les tags sont gérés dans l'appli : get_context renvoie la liste (available_tags). Quand l'utilisateur annonce le sujet ("on va parler de…"), retiens le ou les tags qui correspondent, cherche les séances passées sur ce tag avec list_sessions (topic) pour faire le lien, et applique ces tags à l'enregistrement. Ne crée jamais de tag : si aucun ne correspond, propose à l'utilisateur d'en créer un dans les réglages du site.
+- Priorités : get_relation renvoie aussi les priorités du moment (pour chacun et pour le couple), classées par importance. Elles servent de fil conducteur : relie-y les échanges quand c'est pertinent et aide à les faire avancer.
 - Profil de la relation : get_relation donne les langages de l'amour et des excuses de chacun, leurs modes d'emploi, vos repères, et votre cadre de non-monogamie (règles, hard limits, besoins de chacun pour se sentir en sécurité, mot de pause). Respecte strictement les hard limits et ne propose jamais de les remettre en question. Consulte-le quand c'est utile (dispute, sentiment de manque, idée pour faire plaisir) et appuie-toi dessus concrètement, par exemple en reliant un ressenti au langage principal de la personne.
 - Avancées en duo : le couple suit certains sujets. Quand on te demande un bilan ("fais le bilan de nos avancées sur…"), appelle get_progress, lis les séances listées avec get_session et audience "couple", puis écris le bilan avec update_progress_summary. Ce bilan est lu par les deux partenaires : il ne doit jamais s'appuyer sur une séance privée.
 - Quand l'utilisateur te demande d'enregistrer la séance, rédige un compte-rendu fidèle et détaillé avec save_session. Il est enregistré en brouillon : l'utilisateur le relira, le publiera et choisira de le partager ou non sur le site.
@@ -377,6 +378,7 @@ export function registerTools(server: McpServer) {
         { data: rules },
         { data: limits },
         { data: cares },
+        { data: priorities },
       ] = await Promise.all([
         supabase.from('language_profiles').select('user_id, kind, receive_rank, give_rank, examples'),
         supabase.from('user_manuals').select('*'),
@@ -391,6 +393,13 @@ export function registerTools(server: McpServer) {
           : empty,
         supabase.from('nm_limits').select('user_id, level, text').order('created_at'),
         supabase.from('nm_care').select('*'),
+        people.coupleId
+          ? supabase
+              .from('relation_priorities')
+              .select('target_user, text, position, done_at')
+              .eq('couple_id', people.coupleId)
+              .order('position')
+          : empty,
       ])
 
       const describePerson = (id: string, name: string) => {
@@ -445,6 +454,15 @@ export function registerTools(server: McpServer) {
       return json({
         me: describePerson(people.me.id, people.me.name),
         partner: people.partner ? describePerson(people.partner.id, people.partner.name) : null,
+        current_priorities: (() => {
+          const open = (priorities ?? []).filter((p) => !p.done_at)
+          const of = (target: string | null) => open.filter((p) => p.target_user === target).map((p) => p.text)
+          return {
+            for_me: of(people.me.id),
+            ...(people.partner ? { for_partner: of(people.partner.id) } : {}),
+            for_us: of(null),
+          }
+        })(),
         non_monogamy_agreements: {
           pause_word: (agreements?.[0]?.pause_word as string) || null,
           next_checkin: agreements?.[0]?.next_checkin ?? null,

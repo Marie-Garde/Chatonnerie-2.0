@@ -31,6 +31,16 @@ export interface Landmark {
   created_at: string
 }
 
+export interface Priority {
+  id: string
+  target_user: string | null
+  text: string
+  position: number
+  done_at: string | null
+  created_by: string | null
+  created_at: string
+}
+
 export const useRelationStore = defineStore('relation', () => {
   const auth = useAuthStore()
   const couple = useCoupleStore()
@@ -38,6 +48,7 @@ export const useRelationStore = defineStore('relation', () => {
   const profiles = ref<LanguageProfile[]>([])
   const manuals = ref<UserManual[]>([])
   const landmarks = ref<Landmark[]>([])
+  const priorities = ref<Priority[]>([])
   const loaded = ref(false)
 
   const myId = computed(() => auth.user?.id ?? '')
@@ -55,20 +66,26 @@ export const useRelationStore = defineStore('relation', () => {
     profiles.value = []
     manuals.value = []
     landmarks.value = []
+    priorities.value = []
     loaded.value = false
   }
 
   async function fetch() {
-    const [p, m, l] = await Promise.all([
+    const [p, m, l, pr] = await Promise.all([
       supabase.from('language_profiles').select('*'),
       supabase.from('user_manuals').select('*'),
       couple.coupleId
         ? supabase.from('couple_landmarks').select('*').eq('couple_id', couple.coupleId).order('created_at')
         : Promise.resolve({ data: [], error: null }),
+      couple.coupleId
+        ? supabase.from('relation_priorities').select('*').eq('couple_id', couple.coupleId).order('position')
+        : Promise.resolve({ data: [], error: null }),
     ])
     if (p.error) throw p.error
     if (m.error) throw m.error
     if (l.error) throw l.error
+    if (pr.error) throw pr.error
+    priorities.value = (pr.data ?? []) as Priority[]
     profiles.value = p.data as LanguageProfile[]
     manuals.value = m.data as UserManual[]
     landmarks.value = (l.data ?? []) as Landmark[]
@@ -112,7 +129,56 @@ export const useRelationStore = defineStore('relation', () => {
     landmarks.value = landmarks.value.filter((l) => l.id !== id)
   }
 
+  function prioritiesFor(target: string | null) {
+    return priorities.value
+      .filter((p) => p.target_user === target)
+      .sort((a, b) => Number(!!a.done_at) - Number(!!b.done_at) || a.position - b.position)
+  }
+
+  async function addPriority(target: string | null, text: string) {
+    if (!couple.coupleId) return
+    const position = priorities.value.reduce((max, p) => Math.max(max, p.position), 0) + 1
+    const { data, error } = await supabase
+      .from('relation_priorities')
+      .insert({ couple_id: couple.coupleId, target_user: target, text, position })
+      .select('*')
+      .single()
+    if (error) throw error
+    priorities.value.push(data as Priority)
+  }
+
+  async function updatePriority(id: string, values: Partial<Pick<Priority, 'text' | 'position' | 'done_at'>>) {
+    const { data, error } = await supabase.from('relation_priorities').update(values).eq('id', id).select('*').single()
+    if (error) throw error
+    priorities.value = priorities.value.map((p) => (p.id === id ? (data as Priority) : p))
+  }
+
+  async function movePriority(id: string, direction: -1 | 1) {
+    const item = priorities.value.find((p) => p.id === id)
+    if (!item) return
+    const list = prioritiesFor(item.target_user).filter((p) => !p.done_at)
+    const index = list.findIndex((p) => p.id === id)
+    const other = list[index + direction]
+    if (!other) return
+    await Promise.all([
+      updatePriority(item.id, { position: other.position }),
+      updatePriority(other.id, { position: item.position }),
+    ])
+  }
+
+  async function removePriority(id: string) {
+    const { error } = await supabase.from('relation_priorities').delete().eq('id', id)
+    if (error) throw error
+    priorities.value = priorities.value.filter((p) => p.id !== id)
+  }
+
   return {
+    priorities,
+    prioritiesFor,
+    addPriority,
+    updatePriority,
+    movePriority,
+    removePriority,
     profiles,
     manuals,
     landmarks,
