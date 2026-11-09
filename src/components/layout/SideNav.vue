@@ -34,6 +34,8 @@ const currentLabel = computed(() => links.find((l) => route.path.startsWith(l.to
 const icons = {
   heart: ['M19.5 12.6 12 20l-7.5-7.4A5 5 0 1 1 12 6a5 5 0 1 1 7.5 6.6z'],
   rings: ['M15 12a6 6 0 1 1-12 0a6 6 0 1 1 12 0z', 'M21 12a6 6 0 1 1-12 0a6 6 0 1 1 12 0z'],
+  bubble: ['M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z', 'M9 10h6', 'M9 14h4'],
+  calendar: ['M5 5h14a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z', 'M4 10h16', 'M8 3v4', 'M16 3v4'],
   sliders: [
     'M4 6h9',
     'M17 6h3',
@@ -49,6 +51,8 @@ const icons = {
 
 const links: { to: string; label: string; icon: keyof typeof icons }[] = [
   { to: '/therapie', label: 'Thérapie', icon: 'heart' },
+  { to: '/a-discuter', label: 'À discuter', icon: 'bubble' },
+  { to: '/point-mensuel', label: 'Point mensuel', icon: 'calendar' },
   { to: '/relation', label: 'Relation', icon: 'rings' },
   { to: '/reglages', label: 'Réglages', icon: 'sliders' },
 ]

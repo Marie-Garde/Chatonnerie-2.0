@@ -9,6 +9,8 @@ import { useProgressStore } from '@/stores/progress'
 import { useRelationStore } from '@/stores/relation'
 import { useSessionsStore } from '@/stores/sessions'
 import { useTagsStore } from '@/stores/tags'
+import { useTopicsStore } from '@/stores/topics'
+import { useCheckinsStore } from '@/stores/checkins'
 import { useWishesStore } from '@/stores/wishes'
 import { useNonMonoStore } from '@/stores/nonmono'
 
@@ -18,6 +20,8 @@ const progress = useProgressStore()
 const relation = useRelationStore()
 const sessions = useSessionsStore()
 const tags = useTagsStore()
+const topics = useTopicsStore()
+const checkins = useCheckinsStore()
 const wishes = useWishesStore()
 const nonmono = useNonMonoStore()
 const route = useRoute()
@@ -42,6 +46,8 @@ watch(
     relation.reset()
     wishes.reset()
     nonmono.reset()
+    topics.reset()
+    checkins.reset()
     if (userId) void couple.fetch()
     else {
       couple.reset()

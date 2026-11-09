@@ -54,6 +54,16 @@ const router = createRouter({
       component: () => import('@/views/SessionFormView.vue'),
     },
     {
+      path: '/a-discuter',
+      name: 'topics',
+      component: () => import('@/views/TopicsView.vue'),
+    },
+    {
+      path: '/point-mensuel',
+      name: 'checkin',
+      component: () => import('@/views/CheckinView.vue'),
+    },
+    {
       path: '/relation',
       name: 'relation',
       component: () => import('@/views/RelationView.vue'),
