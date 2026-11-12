@@ -6,6 +6,7 @@ import { formatSessionDate } from '@/lib/format'
 import { useAuthStore } from '@/stores/auth'
 import { useCoupleStore } from '@/stores/couple'
 import { useSessionsStore } from '@/stores/sessions'
+import { sessionVisibility, VISIBILITY_LABELS } from '@/types/session'
 
 const auth = useAuthStore()
 const couple = useCoupleStore()
@@ -150,7 +151,7 @@ const steps = [
                   <span>{{ session.type === 'duo' ? 'À deux' : 'Perso' }}</span>
                   <span v-if="session.author_id !== auth.user?.id">· {{ couple.nameOf(session.author_id) }}</span>
                   <span v-else-if="session.type === 'solo'" class="share-state">
-                    · {{ session.shared ? 'Partagée' : 'Privée' }}
+                    · {{ VISIBILITY_LABELS[sessionVisibility(session)] }}
                   </span>
                   <TagChip v-for="topic in session.topics.slice(0, 4)" :key="topic" :name="topic" small />
                 </div>

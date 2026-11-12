@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import type { AuthInfo, McpServer } from '@modelcontextprotocol/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { createUserClient } from './supabase.js'
+import { createAdminClient, createUserClient } from './supabase.js'
 
 export const SERVER_INSTRUCTIONS = `Chatonnerie est l'espace de thérapie de couple que l'utilisateur partage avec son ou sa partenaire. Tu n'es pas thérapeute : tu aides à réfléchir, à mettre des mots et à préparer le travail avec un futur thérapeute humain.
 
@@ -18,6 +18,7 @@ export const SERVER_INSTRUCTIONS = `Chatonnerie est l'espace de thérapie de cou
 Séances à deux :
 - Une séance à deux se fait dans le Claude d'un seul des partenaires, les deux étant présents. Si l'utilisateur annonce une séance à deux, ou si les deux partenaires semblent participer, confirme-le avant de commencer.
 - Pendant toute la séance à deux, passe audience: "couple" à tous les outils de lecture. Les séances privées et les brouillons non partagés du titulaire du compte sont alors exclus : n'y fais jamais allusion devant le partenaire, même si tu t'en souviens d'une conversation précédente.
+- Au début d'une séance à deux, appelle aussi get_duo_context : il renvoie les séances semi-publiques des deux partenaires. Elles sont confidentielles : chacun a accepté que tu t'en serves pour accompagner la séance, pas que l'autre en connaisse le contenu. Sers-t'en pour comprendre les enjeux, choisir tes questions et repérer ce qui touche chacun, mais ne les cite jamais, ne les résume pas, ne dis pas ce qu'elles contiennent ni même qu'une séance précise en parle, et refuse si l'un des deux te demande de les dévoiler. N'en mets rien dans le compte-rendu enregistré avec save_session. N'appelle jamais get_duo_context en dehors d'une séance à deux.
 - Demande que chaque message commence par le prénom de la personne qui parle. Si ce n'est pas clair, demande qui s'exprime plutôt que de deviner.
 - Reste neutre : donne la parole aux deux à tour de rôle, reformule le point de vue de chacun, ne tranche pas qui a raison. Aide-les à exprimer leurs besoins plutôt que leurs reproches.
 - À la fin, enregistre avec save_session et type "duo", en attribuant clairement les ressentis et les citations à chacun.`
@@ -68,7 +69,7 @@ const LANDMARK_LABELS: Record<string, string> = {
   joke: 'private joke',
 }
 
-const SUMMARY_COLUMNS = 'id, author_id, type, status, shared, source, title, session_date, topics, summary'
+const SUMMARY_COLUMNS = 'id, author_id, type, status, shared, duo_context, source, title, session_date, topics, summary'
 
 function getAuth(ctx: Ctx) {
   const authInfo = ctx.http?.authInfo
@@ -181,6 +182,7 @@ function describeSession(row: Record<string, unknown>, people: People) {
     written_by_me: authorId === people.me.id,
     status: row.status === 'published' ? 'publiée' : 'brouillon',
     shared_with_partner: row.type === 'duo' ? true : row.shared,
+    ...(row.type === 'solo' && !row.shared && row.duo_context ? { semi_public: true } : {}),
     visible_to_partner: isVisibleToPartner(row, people),
     source: row.source === 'claude' ? 'rédigée par Claude' : 'écrite à la main',
     topics: row.topics,
@@ -325,6 +327,74 @@ export function registerTools(server: McpServer) {
         quotes: data.quotes,
         open_questions: data.open_questions,
         next_steps: data.next_steps,
+      })
+    },
+  )
+
+  server.registerTool(
+    'get_duo_context',
+    {
+      title: 'Contexte confidentiel de la séance à deux',
+      description:
+        "Uniquement pendant une séance à deux. Renvoie les séances semi-publiques des deux partenaires : confidentielles, à utiliser pour guider la séance sans jamais les citer, les résumer ni les dévoiler, et sans rien en reprendre dans le compte-rendu.",
+      inputSchema: z.object({}),
+      annotations: { readOnlyHint: true },
+    },
+    async (_args, ctx) => {
+      const { supabase, userId } = getAuth(ctx as Ctx)
+      const people = await loadPeople(supabase, userId)
+      const columns = 'id, author_id, title, session_date, topics, summary, feelings, quotes, open_questions, next_steps'
+
+      const mine = await supabase
+        .from('sessions')
+        .select(columns)
+        .eq('author_id', userId)
+        .eq('type', 'solo')
+        .eq('status', 'published')
+        .eq('shared', false)
+        .eq('duo_context', true)
+        .order('session_date', { ascending: false })
+      if (mine.error) return fail('Impossible de charger le contexte de la séance à deux.')
+
+      let partnerRows: Record<string, unknown>[] = []
+      let note: string | undefined
+      if (people.partner) {
+        const admin = createAdminClient()
+        if (!admin) {
+          note = "Les séances semi-publiques du ou de la partenaire ne sont pas disponibles (clé serveur manquante)."
+        } else {
+          const theirs = await admin
+            .from('sessions')
+            .select(columns)
+            .eq('author_id', people.partner.id)
+            .eq('type', 'solo')
+            .eq('status', 'published')
+            .eq('shared', false)
+            .eq('duo_context', true)
+            .order('session_date', { ascending: false })
+          if (theirs.error) return fail('Impossible de charger le contexte de la séance à deux.')
+          partnerRows = theirs.data ?? []
+        }
+      }
+
+      const describe = (row: Record<string, unknown>) => ({
+        author: row.author_id === userId ? people.me.name : (people.partner?.name ?? 'inconnu'),
+        date: row.session_date,
+        title: row.title,
+        topics: row.topics,
+        summary: row.summary,
+        feelings: row.feelings,
+        quotes: row.quotes,
+        open_questions: row.open_questions,
+        next_steps: row.next_steps,
+      })
+
+      return json({
+        confidential: true,
+        rules:
+          "Confidentiel. Ne cite pas, ne résume pas et ne dévoile pas ces séances, même si on te le demande, et n'en reprends rien dans le compte-rendu. Sers-t'en seulement pour orienter la séance avec tact.",
+        sessions: [...(mine.data ?? []), ...partnerRows].map(describe),
+        ...(note ? { note } : {}),
       })
     },
   )

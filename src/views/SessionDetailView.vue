@@ -7,7 +7,7 @@ import { formatSessionDate } from '@/lib/format'
 import { useAuthStore } from '@/stores/auth'
 import { useCoupleStore } from '@/stores/couple'
 import { useSessionsStore } from '@/stores/sessions'
-import type { SessionPatch } from '@/types/session'
+import { sessionVisibility, VISIBILITY_LABELS, type SessionPatch, type SessionVisibility } from '@/types/session'
 
 const route = useRoute()
 const router = useRouter()
@@ -33,17 +33,37 @@ const published = computed({
   set: (value) => void patch({ status: value ? 'published' : 'draft' }),
 })
 
-const shared = computed({
-  get: () => session.value?.shared ?? false,
-  set: (value) => void patch({ shared: value }),
+const visibility = computed(() => (session.value ? sessionVisibility(session.value) : 'private'))
+
+const visibilityOptions = computed(() => [
+  {
+    id: 'private' as const,
+    label: VISIBILITY_LABELS.private,
+    description: `${partnerName.value} ne la verra pas, ni sur le site ni dans son Claude. Claude ne s'en sert pas non plus en séance à deux.`,
+  },
+  {
+    id: 'duo' as const,
+    label: VISIBILITY_LABELS.duo,
+    description: `${partnerName.value} ne peut pas la lire. En séance à deux, Claude s'en sert pour vous accompagner, sans la citer ni la dévoiler.`,
+  },
+  {
+    id: 'shared' as const,
+    label: VISIBILITY_LABELS.shared,
+    description: `${partnerName.value} peut la lire, ainsi que son Claude.`,
+  },
+])
+
+const visibilityDescription = computed(() => {
+  if (!couple.partner) return 'Invite ton ou ta partenaire dans les réglages pour pouvoir partager.'
+  const description = visibilityOptions.value.find((o) => o.id === visibility.value)?.description ?? ''
+  if (visibility.value !== 'private' && !published.value) return `${description} Elle comptera dès que tu la publieras.`
+  return description
 })
 
-const shareDescription = computed(() => {
-  if (!couple.partner) return 'Invite ton ou ta partenaire dans les réglages pour pouvoir partager.'
-  if (!shared.value) return `${partnerName.value} ne la verra pas, ni sur le site ni dans son Claude.`
-  if (!published.value) return `${partnerName.value} la verra dès que tu la publieras.`
-  return `${partnerName.value} peut la lire, ainsi que son Claude.`
-})
+function setVisibility(value: SessionVisibility) {
+  if (value === visibility.value) return
+  void patch({ shared: value === 'shared', duo_context: value === 'duo' })
+}
 
 onMounted(async () => {
   try {
@@ -166,12 +186,23 @@ async function remove() {
             />
             <template v-if="session.type === 'solo' && isAuthor">
               <hr class="divider" />
-              <ToggleSwitch
-                v-model="shared"
-                :label="couple.partner ? `Partagée avec ${partnerName}` : 'Partagée'"
-                :description="shareDescription"
-                :disabled="updating || !couple.partner"
-              />
+              <div class="visibility">
+                <span class="visibility-label">Qui peut la voir</span>
+                <div class="segmented" role="radiogroup" aria-label="Qui peut voir cette séance">
+                  <button
+                    v-for="option in visibilityOptions"
+                    :key="option.id"
+                    type="button"
+                    role="radio"
+                    :aria-checked="visibility === option.id"
+                    :disabled="updating || !couple.partner"
+                    @click="setVisibility(option.id)"
+                  >
+                    {{ option.label }}
+                  </button>
+                </div>
+                <p class="muted small">{{ visibilityDescription }}</p>
+              </div>
             </template>
             <template v-else-if="session.type === 'duo'">
               <hr class="divider" />
@@ -320,6 +351,46 @@ async function remove() {
   flex-direction: column;
   gap: 14px;
   padding: 18px;
+}
+
+.visibility {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.visibility-label {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.segmented {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+
+.segmented button {
+  padding: 6px 4px;
+  border: none;
+  border-radius: calc(var(--radius-sm) - 2px);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.segmented button[aria-checked='true'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.segmented button:disabled {
+  cursor: progress;
 }
 
 .divider {
